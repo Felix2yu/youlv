@@ -2,7 +2,7 @@ import { useMemo, useState } from 'react';
 import { api } from '../lib/api';
 import { useAsync } from '../lib/hooks';
 import { md, num } from '../lib/format';
-import type { Place } from '../lib/types';
+import type { Place, PlaceStats } from '../lib/types';
 import { Badge, Card, Empty, ErrorBox, SectionTitle, Spinner } from '../components/ui';
 
 const SORTS = [
@@ -22,9 +22,11 @@ export default function Places() {
     () => api.places({ q, sort, has_coord: onlyCoord, limit, offset }),
     [q, sort, onlyCoord, offset]
   );
+  const stats = useAsync(() => api.placesStats(), []);
 
   return (
     <div className="mx-auto flex max-w-4xl flex-col gap-3">
+      {stats.data ? <PlaceOverview s={stats.data} /> : null}
       <Card>
         <div className="flex flex-wrap items-center gap-2">
           <input
@@ -173,6 +175,40 @@ function Pager({
       >
         下一页
       </button>
+    </div>
+  );
+}
+
+/**
+ * 地点库概览。
+ *
+ * 「仅引用」那格是重点：这些地点只是被别人提到过（到访、交通、天气里出现过），
+ * 没有自己的坐标，因此不出现在足迹地图上。补一份地点记录就能升级。
+ */
+function PlaceOverview({ s }: { s: PlaceStats }) {
+  const cells = [
+    { label: '全部地点', value: num(s.total) },
+    { label: '有坐标', value: num(s.with_coord) },
+    { label: '仅引用', value: num(s.stubs), tone: s.stubs > 0 ? 'warn' : undefined },
+    { label: '城市', value: num(s.cities) }
+  ];
+  return (
+    <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+      {cells.map((c) => (
+        <div
+          key={c.label}
+          className="rounded-[var(--radius-card)] border border-line bg-surface px-2.5 py-2"
+        >
+          <div className="text-[11px] text-faint">{c.label}</div>
+          <div
+            className={`tnum text-[17px] leading-tight font-semibold ${
+              c.tone === 'warn' ? 'text-warn' : 'text-ink'
+            }`}
+          >
+            {c.value}
+          </div>
+        </div>
+      ))}
     </div>
   );
 }

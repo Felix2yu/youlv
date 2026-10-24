@@ -11,10 +11,15 @@ import type {
   ModeStat,
   Overview,
   Place,
+  PlaceStats,
   Report,
   RollbackResult,
+  Settings,
   BBox,
+  Tag,
+  TilesConfig,
   Visit,
+  VisitDetail,
   Weather,
   ActivityStat
 } from './types';
@@ -157,5 +162,39 @@ export const api = {
       `/api/imports/${encodeURIComponent(batchNo)}/issues`
     ),
 
-  issuesCsvUrl: (batchNo: string) => `/api/imports/${encodeURIComponent(batchNo)}/issues.csv`
+  issuesCsvUrl: (batchNo: string) => `/api/imports/${encodeURIComponent(batchNo)}/issues.csv`,
+
+  // ---- 详情与设置 ----
+  visit: (id: number, frame = 'wgs84') => json<VisitDetail>(`/api/visits/${id}${qs({ frame })}`),
+
+  tags: (limit = 100) => json<{ items: Tag[] }>(`/api/tags${qs({ limit })}`).then((r) => r.items),
+
+  placesStats: (p: { city?: string; origin?: string } = {}) =>
+    json<PlaceStats>(`/api/places/stats${qs({ ...p })}`),
+
+  tiles: () => json<TilesConfig>('/api/map/tiles'),
+
+  settings: () => json<Settings>('/api/settings'),
+
+  updateSettings: (patch: Partial<Settings>) =>
+    json<Settings>('/api/settings', {
+      method: 'PUT',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(patch)
+    }),
+
+  deleteImport: async (batchNo: string) => {
+    const res = await fetch(`/api/imports/${encodeURIComponent(batchNo)}`, { method: 'DELETE' });
+    if (!res.ok) {
+      const body = await res.text();
+      let msg = `删除失败（${res.status}）`;
+      try {
+        const j = JSON.parse(body) as { error?: string };
+        if (j.error) msg = j.error;
+      } catch {
+        // 非 JSON 错误体，用默认文案
+      }
+      throw new ApiError(msg, res.status);
+    }
+  }
 };

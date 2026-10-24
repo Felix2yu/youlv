@@ -1,16 +1,18 @@
 import { useMemo } from 'react';
 import { api } from '../lib/api';
-import { useAsync } from '../lib/hooks';
+import { useAsync, useRoute } from '../lib/hooks';
 import { durH, num } from '../lib/format';
-import type { ActivityStat, CityStat, HourStat, ModeStat, Overview } from '../lib/types';
+import type { ActivityStat, CityStat, HourStat, ModeStat, Overview, Tag } from '../lib/types';
 import { Bar, Card, Dot, ErrorBox, SectionTitle, Spinner } from '../components/ui';
 
 export default function Stats() {
+  const { go } = useRoute();
   const overview = useAsync<Overview>(() => api.overview(), []);
   const acts = useAsync<ActivityStat[]>(() => api.statsActivities(), []);
   const cities = useAsync<CityStat[]>(() => api.statsCities(), []);
   const commute = useAsync<ModeStat[]>(() => api.statsCommute(), []);
   const hourly = useAsync<HourStat[]>(() => api.statsHourly(), []);
+  const tags = useAsync(() => api.tags(50), []);
 
   const loading =
     overview.loading || acts.loading || cities.loading || commute.loading || hourly.loading;
@@ -29,10 +31,43 @@ export default function Stats() {
           {acts.data?.length ? <ActivityPanel items={acts.data} /> : null}
           {cities.data?.length ? <CityPanel items={cities.data} /> : null}
           {commute.data?.length ? <CommutePanel items={commute.data} /> : null}
+          {tags.data?.length ? (
+            <TagPanel items={tags.data} onPick={(name) => go('/timeline', { q: name })} />
+          ) : null}
           {hourly.data?.length ? <HourPanel items={hourly.data} /> : null}
         </>
       )}
     </div>
+  );
+}
+
+/** 标签分布。点一个标签跳到时间轴搜索该标签的到访。 */
+function TagPanel({ items, onPick }: { items: Tag[]; onPick: (name: string) => void }) {
+  const max = Math.max(1, ...items.map((i) => i.count));
+  return (
+    <Card>
+      <SectionTitle aside={<span className="tnum">{items.length} 个标签</span>}>标签</SectionTitle>
+      <ul className="flex flex-col gap-1">
+        {items.map((t) => (
+          <li key={t.id}>
+            <button
+              onClick={() => onPick(t.name)}
+              className="flex w-full items-center gap-2 rounded px-1 py-0.5 text-left transition-colors hover:bg-raised"
+              title={`搜索「${t.name}」的到访`}
+            >
+              <Dot color={t.color} />
+              <span className="w-16 shrink-0 truncate text-[12px]">{t.name}</span>
+              <div className="min-w-0 flex-1">
+                <Bar value={t.count} max={max} color={t.color} />
+              </div>
+              <span className="tnum w-14 shrink-0 text-right text-[12px] text-muted">
+                {t.count} 次
+              </span>
+            </button>
+          </li>
+        ))}
+      </ul>
+    </Card>
   );
 }
 

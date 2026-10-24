@@ -150,6 +150,8 @@ export interface Weather {
 export type ImportKind = 'places' | 'visits' | 'trips' | 'weather';
 
 export interface Issue {
+  /** 问题所属的文件类型（places|visits|trips|weather） */
+  kind?: string;
   line: number;
   row_no: number;
   column: string;
@@ -204,6 +206,8 @@ export interface ReportTotals {
   dup_skip: number;
   inserted: number;
   skipped: number;
+  /** 仅引用桩升级为正式地点的条数（就地升级，不计入 inserted） */
+  promoted: number;
 }
 
 export interface Options {
@@ -265,4 +269,85 @@ export interface ImportRow {
 export interface RollbackResult {
   batch_no: string;
   deleted: Record<string, number>;
+}
+
+// ---------- 详情与设置 ----------
+
+/** 到访详情。比时间轴上的 Visit 多出解析依据、原始坐标与所属批次。 */
+export interface VisitDetail {
+  id: number;
+  place_id: number;
+  place_name: string;
+  place_name_raw: string;
+  display_name: string;
+  city?: string;
+  admin_area?: string;
+  district?: string;
+  activity: string;
+  activity_raw: string;
+  color: string;
+  arrived_at: number;
+  departed_at?: number;
+  duration_s?: number;
+  tz: string;
+  arrived_local: string;
+  departed_local?: string;
+  local_date: string;
+  local_month: string;
+  local_year: number;
+  local_hour: number;
+  local_dow: number;
+  lat?: number;
+  lon?: number;
+  lat_gcj?: number;
+  lon_gcj?: number;
+  lat_raw?: number;
+  lon_raw?: number;
+  coord_frame: string;
+  resolve_method: string;
+  resolve_dist_m?: number;
+  resolve_confidence: string;
+  note?: string;
+  tags?: string[];
+  import_batch_id?: number;
+  import_batch_no?: string;
+}
+
+export interface Tag {
+  id: number;
+  name: string;
+  color: string;
+  count: number;
+  first_visit_at?: number;
+  last_visit_at?: number;
+}
+
+export interface PlaceStats {
+  total: number;
+  with_coord: number;
+  without_coord: number;
+  stubs: number;
+  by_origin: Record<string, number>;
+  cities: number;
+  top_cities: CityStat[];
+}
+
+export interface TilesConfig {
+  url_template: string;
+  attribution: string;
+  max_zoom: number;
+  subdomains: string;
+  frame: string;
+}
+
+export interface Settings {
+  map: {
+    tiles_url: string;
+    tiles_attribution: string;
+    tiles_max_zoom: number;
+    tiles_subdomains: string;
+    frame: string;
+  };
+  timeline: { frame: string };
+  weather: { approx: boolean };
 }

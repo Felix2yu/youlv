@@ -3,17 +3,49 @@ import { api } from '../lib/api';
 import { useAsync, useRoute } from '../lib/hooks';
 import { dateCN, dur, hhmm, monthCN, shiftDate, shiftMonth, today } from '../lib/format';
 import { Badge, Button, Card, Dot, Empty, ErrorBox, SectionTitle, Spinner } from '../components/ui';
+import VisitDrawer from '../components/VisitDrawer';
+import type { Visit } from '../lib/types';
 
-type Mode = 'day' | 'month';
+type Mode = 'day' | 'month' | 'search';
 
 export default function Timeline() {
   const { query, go } = useRoute();
-  const [mode, setMode] = useState<Mode>('day');
+  const [mode, setMode] = useState<Mode>(query.get('q') ? 'search' : 'day');
   const [date, setDate] = useState(() => query.get('date') || today());
   const month = useMemo(() => date.slice(0, 7), [date]);
 
+  // 搜索条件分「输入中」与「已提交」两份：输入框每敲一个字都发一次请求
+  // 会在慢网下打出成吨无用流量，提交后才查。
+  const [q, setQ] = useState(() => query.get('q') || '');
+  const [activity, setActivity] = useState(() => query.get('activity') || '');
+  const [from, setFrom] = useState(() => query.get('from') || '');
+  const [to, setTo] = useState(() => query.get('to') || '');
+  const [applied, setApplied] = useState(() => ({
+    q: query.get('q') || '',
+    activity: query.get('activity') || '',
+    from: query.get('from') || '',
+    to: query.get('to') || ''
+  }));
+
+  const [visitId, setVisitId] = useState<number | null>(() => {
+    const v = query.get('visit');
+    return v && Number(v) > 0 ? Number(v) : null;
+  });
+
   const day = useAsync(() => api.timelineDay(date), [date]);
   const buckets = useAsync(() => api.timelineMonth(month), [month]);
+  const activities = useAsync(() => api.activities(), []);
+  const results = useAsync(
+    () =>
+      api.timelineRange({
+        q: applied.q,
+        activity: applied.activity,
+        from: applied.from,
+        to: applied.to,
+        limit: 200
+      }),
+    [applied.q, applied.activity, applied.from, applied.to]
+  );
 
   const jump = (d: string) => {
     setDate(d);
@@ -24,6 +56,23 @@ export default function Timeline() {
     () => Math.max(1, ...(buckets.data ?? []).map((b) => b.count)),
     [buckets.data]
   );
+
+  const openVisit = (id: number) => {
+    setVisitId(id);
+    go('/timeline', { date, visit: id });
+  };
+
+  const closeVisit = () => {
+    setVisitId(null);
+    go('/timeline', { date });
+  };
+
+  const submitSearch = () => {
+    const next = { q, activity, from, to };
+    setApplied(next);
+    setMode('search');
+    go('/timeline', { q: next.q, activity: next.activity, from: next.from, to: next.to });
+  };
 
   return (
     <div className="mx-auto flex max-w-3xl flex-col gap-3">
@@ -49,16 +98,29 @@ export default function Timeline() {
         <Button
           size="sm"
           variant={mode === 'day' ? 'primary' : 'ghost'}
-          onClick={() => setMode('day')}
+          onClick={() => {
+            setMode('day');
+            go('/timeline', { date });
+          }}
         >
           当天
         </Button>
         <Button
           size="sm"
           variant={mode === 'month' ? 'primary' : 'ghost'}
-          onClick={() => setMode('month')}
+          onClick={() => {
+            setMode('month');
+            go('/timeline', { date });
+          }}
         >
           整月
+        </Button>
+        <Button
+          size="sm"
+          variant={mode === 'search' ? 'primary' : 'ghost'}
+          onClick={() => setMode('search')}
+        >
+          搜索
         </Button>
         <span className="ml-auto text-[12px] text-faint">{dateCN(date)}</span>
       </div>
@@ -90,64 +152,157 @@ export default function Timeline() {
         </Card>
       ) : null}
 
-      <Card padded={false}>
-        <div className="border-b border-line px-3 py-2">
-          <SectionTitle aside={<span className="tnum">{(day.data ?? []).length} 条</span>}>
-            {dateCN(date)}
-          </SectionTitle>
-        </div>
-        {day.loading ? (
-          <div className="p-3">
-            <Spinner />
+      {mode === 'search' ? (
+        <Card>
+          <SectionTitle>搜索到访</SectionTitle>
+          <div className="flex flex-wrap items-center gap-2">
+            <input
+              value={q}
+              onChange={(e) => setQ(e.target.value)}
+              onKeyDown={(e) => e.key === 'Enter' && submitSearch()}
+              placeholder="地点、备注或标签"
+              className="h-8 min-w-0 flex-1 rounded-md border border-line-strong bg-surface px-2 text-[13px] placeholder:text-faint"
+            />
+            <select
+              value={activity}
+              onChange={(e) => setActivity(e.target.value)}
+              className="h-8 rounded-md border border-line-strong bg-surface px-2 text-[12px]"
+            >
+              <option value="">全部活动</option>
+              {(activities.data ?? []).map((a) => (
+                <option key={a.name} value={a.name}>
+                  {a.name}
+                </option>
+              ))}
+            </select>
+            <input
+              type="date"
+              value={from}
+              onChange={(e) => setFrom(e.target.value)}
+              className="h-8 rounded-md border border-line-strong bg-surface px-2 text-[12px]"
+            />
+            <span className="text-[12px] text-faint">至</span>
+            <input
+              type="date"
+              value={to}
+              onChange={(e) => setTo(e.target.value)}
+              className="h-8 rounded-md border border-line-strong bg-surface px-2 text-[12px]"
+            />
+            <Button variant="primary" onClick={submitSearch}>
+              搜索
+            </Button>
           </div>
-        ) : day.error ? (
-          <div className="p-3">
-            <ErrorBox>{day.error}</ErrorBox>
+        </Card>
+      ) : null}
+
+      {mode === 'search' ? (
+        <Card padded={false}>
+          <div className="border-b border-line px-3 py-2">
+            <SectionTitle
+              aside={<span className="tnum">{(results.data?.items ?? []).length} 条</span>}
+            >
+              搜索结果
+            </SectionTitle>
           </div>
-        ) : (day.data ?? []).length === 0 ? (
-          <Empty hint="换个日期试试，或者先导入 Rond 导出的数据。">这一天还没有到访记录</Empty>
-        ) : (
-          <ul>
-            {(day.data ?? []).map((v) => (
-              <li key={v.id} className="flex gap-3 border-b border-line px-3 py-2 last:border-0">
-                <div className="w-10 shrink-0 pt-0.5 text-right">
-                  <div className="tnum text-[13px] font-medium">{hhmm(v.arrived_at)}</div>
-                  <div className="tnum text-[11px] text-faint">
-                    {v.departed_at ? hhmm(v.departed_at) : '—'}
-                  </div>
-                </div>
-                <div className="flex min-w-0 flex-1 flex-col gap-1">
-                  <div className="flex min-w-0 items-center gap-1.5">
-                    <Dot color={v.color} />
-                    <span className="truncate text-[13px] font-medium">{v.place_name}</span>
-                    {v.city ? <span className="text-[11px] text-faint">{v.city}</span> : null}
-                    {v.weather_level && v.weather_level !== 'exact' ? (
-                      <Badge tone="warn" title="这一刻没有精确天气，用了附近时间或地点的近似值">
-                        天气近似
-                      </Badge>
-                    ) : null}
-                  </div>
-                  <div className="flex flex-wrap items-center gap-x-2 gap-y-0.5 text-[11px] text-muted">
-                    <span>{v.activity || '未分类'}</span>
-                    <span className="tnum">{dur(v.duration_s)}</span>
-                    {v.temp_c != null ? (
-                      <span className="tnum">{Math.round(v.temp_c)}°</span>
-                    ) : null}
-                    {v.condition ? <span>{v.condition}</span> : null}
-                    {v.tags?.map((t) => (
-                      <Badge key={t}>{t}</Badge>
-                    ))}
-                  </div>
-                  {v.note ? (
-                    <div className="text-[12px] leading-relaxed text-muted">{v.note}</div>
-                  ) : null}
-                </div>
-              </li>
-            ))}
-          </ul>
-        )}
-      </Card>
+          {results.loading ? (
+            <div className="p-3">
+              <Spinner />
+            </div>
+          ) : results.error ? (
+            <div className="p-3">
+              <ErrorBox>{results.error}</ErrorBox>
+            </div>
+          ) : (results.data?.items ?? []).length === 0 ? (
+            <Empty hint="换个关键词，或清掉筛选条件。">没有匹配的到访</Empty>
+          ) : (
+            <ul>
+              {(results.data?.items ?? []).map((v) => (
+                <VisitRow key={v.id} v={v} onOpen={openVisit} showDate />
+              ))}
+            </ul>
+          )}
+        </Card>
+      ) : (
+        <Card padded={false}>
+          <div className="border-b border-line px-3 py-2">
+            <SectionTitle aside={<span className="tnum">{(day.data ?? []).length} 条</span>}>
+              {dateCN(date)}
+            </SectionTitle>
+          </div>
+          {day.loading ? (
+            <div className="p-3">
+              <Spinner />
+            </div>
+          ) : day.error ? (
+            <div className="p-3">
+              <ErrorBox>{day.error}</ErrorBox>
+            </div>
+          ) : (day.data ?? []).length === 0 ? (
+            <Empty hint="换个日期试试，或者先导入 Rond 导出的数据。">这一天还没有到访记录</Empty>
+          ) : (
+            <ul>
+              {(day.data ?? []).map((v) => (
+                <VisitRow key={v.id} v={v} onOpen={openVisit} />
+              ))}
+            </ul>
+          )}
+        </Card>
+      )}
+
+      <VisitDrawer id={visitId} onClose={closeVisit} />
     </div>
+  );
+}
+
+/** 到访行。整行可点开详情。 */
+function VisitRow({
+  v,
+  onOpen,
+  showDate
+}: {
+  v: Visit;
+  onOpen: (id: number) => void;
+  showDate?: boolean;
+}) {
+  return (
+    <li className="border-b border-line last:border-0">
+      <button
+        onClick={() => onOpen(v.id)}
+        className="flex w-full gap-3 px-3 py-2 text-left transition-colors hover:bg-raised"
+      >
+        <div className="w-10 shrink-0 pt-0.5 text-right">
+          <div className="tnum text-[13px] font-medium">{hhmm(v.arrived_at)}</div>
+          <div className="tnum text-[11px] text-faint">
+            {v.departed_at ? hhmm(v.departed_at) : '—'}
+          </div>
+        </div>
+        <div className="flex min-w-0 flex-1 flex-col gap-1">
+          <div className="flex min-w-0 items-center gap-1.5">
+            <Dot color={v.color} />
+            <span className="truncate text-[13px] font-medium">{v.place_name}</span>
+            {showDate ? (
+              <span className="tnum shrink-0 text-[11px] text-faint">{v.local_date}</span>
+            ) : null}
+            {v.city ? <span className="text-[11px] text-faint">{v.city}</span> : null}
+            {v.weather_level && v.weather_level !== 'exact' ? (
+              <Badge tone="warn" title="这一刻没有精确天气，用了附近时间或地点的近似值">
+                天气近似
+              </Badge>
+            ) : null}
+          </div>
+          <div className="flex flex-wrap items-center gap-x-2 gap-y-0.5 text-[11px] text-muted">
+            <span>{v.activity || '未分类'}</span>
+            <span className="tnum">{dur(v.duration_s)}</span>
+            {v.temp_c != null ? <span className="tnum">{Math.round(v.temp_c)}°</span> : null}
+            {v.condition ? <span>{v.condition}</span> : null}
+            {v.tags?.map((t) => (
+              <Badge key={t}>{t}</Badge>
+            ))}
+          </div>
+          {v.note ? <div className="text-[12px] leading-relaxed text-muted">{v.note}</div> : null}
+        </div>
+      </button>
+    </li>
   );
 }
 

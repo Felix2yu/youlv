@@ -162,9 +162,13 @@ func (s *Store) TimelineRange(ctx context.Context, f TimelineFilter, frame strin
 		args = append(args, f.PlaceID)
 	}
 	if f.Q != "" {
-		where = append(where, "(p.display_name LIKE ? OR v.place_name_raw LIKE ? OR v.note LIKE ?)")
+		// 搜索要能命中标签：统计页的标签面板点了就跳到时间轴搜索，
+		// 搜的是标签名。若只搜地点与备注，点「园林」会一条都搜不到。
+		where = append(where, `(p.display_name LIKE ? OR v.place_name_raw LIKE ? OR v.note LIKE ?
+			OR EXISTS (SELECT 1 FROM visit_tags vt JOIN tags t ON t.id = vt.tag_id
+			           WHERE vt.visit_id = v.id AND t.name LIKE ?))`)
 		like := "%" + f.Q + "%"
-		args = append(args, like, like, like)
+		args = append(args, like, like, like, like)
 	}
 	w := ""
 	if len(where) > 0 {
