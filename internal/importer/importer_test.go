@@ -557,12 +557,12 @@ func TestPromoteStubUpgradesPlace(t *testing.T) {
 	}
 	var mentioned bool
 	for _, h := range rep2.Highlights {
-		if strings.Contains(h, "升级") {
+		if strings.Contains(h, "并入") {
 			mentioned = true
 		}
 	}
 	if !mentioned {
-		t.Errorf("预检提示里应说明有桩将被升级，实际：%v", rep2.Highlights)
+		t.Errorf("预检提示里应说明有地点将并入既有记录，实际：%v", rep2.Highlights)
 	}
 	if _, err := s.Commit(ctx, rep2.BatchNo, Decisions{}); err != nil {
 		t.Fatalf("第二次 Commit: %v", err)
@@ -662,8 +662,8 @@ func TestPromoteStubSkipsAmbiguousName(t *testing.T) {
 		t.Fatalf("第二次 Preview: %v", err)
 	}
 	for _, h := range rep2.Highlights {
-		if strings.Contains(h, "升级") {
-			t.Errorf("同名多行时不应提示升级：%s", h)
+		if strings.Contains(h, "并入") {
+			t.Errorf("同名多行时不应提示合并：%s", h)
 		}
 	}
 	if _, err := s.Commit(ctx, rep2.BatchNo, Decisions{}); err != nil {
@@ -676,5 +676,52 @@ func TestPromoteStubSkipsAmbiguousName(t *testing.T) {
 	}
 	if n := countOf(t, s, "places"); n != 3 {
 		t.Errorf("地点行数 = %d，应为 3（1 桩 + 2 个分支）", n)
+	}
+}
+
+// 分批导入不得把同一个地点存成两行。
+//
+// 场景：先只导到访记录（地点由到访坐标派生，source_key 按到访的 WGS-84
+// 算），后来再导地点记录（source_key 按登记点的 GCJ-02 算）。两个 key 不相等，
+// 天真实现会插出两行同名地点——实测同一批数据因此从 1001 行涨到 1825 行。
+//
+// 修法是「按名字 + 坐标就近合并」：地点记录的行若与库里某个同名记录几乎
+// 重合（5 m 内，与坐标系判定同一阈值），就并回那一行而不是新建。
+func TestSplitImportDoesNotDuplicatePlaces(t *testing.T) {
+	s := newSvc(t)
+	ctx := context.Background()
+
+	// 第一批：只有到访 → 地点由到访坐标派生。
+	rep1, err := s.Preview(ctx, []UploadedFile{upload("到访记录.csv", sampleVisits)}, DefaultOptions())
+	if err != nil {
+		t.Fatalf("第一次 Preview: %v", err)
+	}
+	if _, err := s.Commit(ctx, rep1.BatchNo, Decisions{}); err != nil {
+		t.Fatalf("第一次 Commit: %v", err)
+	}
+	afterFirst := countOf(t, s, "places")
+	if afterFirst != 2 {
+		t.Fatalf("第一批后地点数 = %d，应为 2", afterFirst)
+	}
+
+	// 第二批：地点记录 → 应并入既有行。
+	rep2, err := s.Preview(ctx, []UploadedFile{upload("地点记录.csv", samplePlaces)}, DefaultOptions())
+	if err != nil {
+		t.Fatalf("第二次 Preview: %v", err)
+	}
+	if _, err := s.Commit(ctx, rep2.BatchNo, Decisions{}); err != nil {
+		t.Fatalf("第二次 Commit: %v", err)
+	}
+	if n := countOf(t, s, "places"); n != afterFirst {
+		t.Errorf("分批导入后地点数从 %d 变成 %d，同一地点被存成了两行", afterFirst, n)
+	}
+	// 并入后这些地点应是正式地点（有坐标、有地址），不再是到访派生的。
+	var noCoord int
+	if err := s.db.QueryRow(
+		`SELECT COUNT(*) FROM places WHERE lat IS NULL OR lon IS NULL`).Scan(&noCoord); err != nil {
+		t.Fatal(err)
+	}
+	if noCoord != 0 {
+		t.Errorf("并入后仍有 %d 个地点没有坐标", noCoord)
 	}
 }

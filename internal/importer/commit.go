@@ -183,7 +183,7 @@ func (s *Service) commitPlaces(ctx context.Context, tx *sql.Tx, rows []stagedPla
 	for _, p := range rows {
 		if id, exists := ids[p.SourceKey]; exists {
 			if p.Promote {
-				n, err := s.promoteStub(ctx, tx, id, p)
+				n, err := s.promotePlace(ctx, tx, id, p)
 				if err != nil {
 					return nil, 0, 0, 0, err
 				}
@@ -222,17 +222,21 @@ func (s *Service) commitPlaces(ctx context.Context, tx *sql.Tx, rows []stagedPla
 	return ids, inserted, skipped, promoted, nil
 }
 
-// promoteStub 把「仅引用」桩升级为正式地点，并回填引用它的到访/交通的空坐标。
+// promotePlace 把既有地点升级为正式地点，并回填引用它的到访/交通的空坐标。
 //
-// 幂等闸门是 WHERE 里的 is_stub=1：升级过的行再执行一次命中 0 行，
-// 不会重复改、也不会重复计数。
+// 「既有地点」有两种：只有名字的桩（此前仅被提到过），与先前由到访坐标
+// 派生出来的行（origin=visit_derived）。后者是分批导入场景：先导到访、
+// 后导地点时，同一地点会因坐标系不同而算出两个 key，靠这里并回一行。
+//
+// 幂等闸门是 WHERE 里的 (is_stub = 1 OR origin <> 'imported')：已升级过
+// 的行再执行一次命中 0 行，不会重复改、也不会重复计数。
 //
 // 回滚语义（重要）：升级改的是**另一个批次**创建的行，因此「撤销升级批次」
 // 不会把坐标收回去；撤销创建批次时，该行因被后续批次的到访/交通引用而保留
 // （回滚只删本批次写入且无人引用的行），坐标也一并留下。
 // 一句话：回滚撤销的是「本批次写入的行」，不追溯撤销「本批次对更早批次的
 // 行所做的就地修改」。
-func (s *Service) promoteStub(ctx context.Context, tx *sql.Tx, id int64, p stagedPlace) (int64, error) {
+func (s *Service) promotePlace(ctx context.Context, tx *sql.Tx, id int64, p stagedPlace) (int64, error) {
 	if p.Lat == nil || p.Lon == nil {
 		return 0, nil
 	}
@@ -247,7 +251,7 @@ func (s *Service) promoteStub(ctx context.Context, tx *sql.Tx, id int64, p stage
 			district=COALESCE(?, district), street=COALESCE(?, street),
 			house_number=COALESCE(?, house_number),
 			origin='imported', is_stub=0, updated_at=unixepoch()
-		WHERE id=? AND is_stub=1`,
+		WHERE id=? AND (is_stub = 1 OR origin <> 'imported')`,
 		p.Lat, p.Lon, p.LatGCJ, p.LonGCJ, p.CoordFrame,
 		p.RadiusM, p.Rating, p.Country, p.AdminArea, p.SubAdmin,
 		p.City, p.District, p.Street, p.HouseNumber, id)

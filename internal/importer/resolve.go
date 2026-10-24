@@ -22,7 +22,8 @@ type candidate struct {
 	LonGCJ   float64
 	HasCoord bool
 	IsStub   bool
-	Hits     int64 // visit_count，同名消歧时的次要判据
+	Hits     int64  // visit_count，同名消歧时的次要判据
+	Origin   string // imported|reference_only|visit_derived
 }
 
 // ResolveResult 是到访记录解析到地点的结论。
@@ -108,6 +109,31 @@ func (r *PlaceResolver) PromoteStub(c *candidate, wLat, wLon, latGCJ, lonGCJ flo
 	c.Lat, c.Lon = wLat, wLon
 	c.LatGCJ, c.LonGCJ = latGCJ, lonGCJ
 	c.HasCoord = true
+}
+
+// MatchNearby 返回该名字下与给定坐标（WGS-84）距离最近的候选，
+// 超过 maxMeters 则返回 nil。
+//
+// 它解决的是「分批导入」场景：先导入到访记录时，库里的地点是由到访坐标
+// 派生的（origin=visit_derived，key 按到访的 WGS-84 算）；后来再导入地点
+// 记录，同一地点的 key 按登记点的 GCJ-02 算——两个 key 不相等，于是同一个
+// 地点被存成两行。全量导入不会暴露这个问题（地点表先解析），分批导入会。
+//
+// 阈值用坐标系判定那套（默认 5 m）：只有几乎重合的点才算同一个点，
+// 同名的不同分店（相距几百米以上）不会被误合。
+func (r *PlaceResolver) MatchNearby(name string, lat, lon, maxMeters float64) *candidate {
+	var best *candidate
+	bestD := maxMeters
+	for _, c := range r.byName[name] {
+		if !c.HasCoord {
+			continue
+		}
+		d := geo.HaversineMeters(lat, lon, c.Lat, c.Lon)
+		if d <= bestD {
+			best, bestD = c, d
+		}
+	}
+	return best
 }
 
 // HomonymGroups 返回重名组的数量（同名但不同键）。

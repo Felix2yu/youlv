@@ -105,13 +105,17 @@ func (s *Service) Preview(ctx context.Context, files []UploadedFile, opt Options
 		if c.IsStub {
 			// 桩的 source_key 不进 existingKeys：它还没被正式导入过，
 			// 本批次若带来同名地点的真实坐标，应当升级它而不是跳过。
+			if c.HasCoord {
+				existingKeys[PlaceSourceKey(c.Name, c.LatGCJ, c.LonGCJ, true)] = true
+			}
 			continue
 		}
 		existingKeys[c.Key] = true
-		// 已升级过的桩（is_stub=0 但 source_key 仍是桩键）要额外登记
-		// 坐标键：CSV 里算出来的键是「名字 + 坐标」，与桩键对不上，
-		// 不登记就会把同一个地点重复插一条。
-		if strings.HasPrefix(c.Key, "stub:") && c.HasCoord {
+		// 额外登记坐标键：visit_derived 地点的 source_key 是按到访的
+		// WGS-84 算的，而地点记录的行是按登记点的 GCJ-02 算的——同一个
+		// 物理地点会算出两个不同的键。不登记坐标键，「先导到访、后导地点」
+		// 的分批导入在第二次导入时就会再插一条。
+		if c.HasCoord {
 			existingKeys[PlaceSourceKey(c.Name, c.LatGCJ, c.LonGCJ, true)] = true
 		}
 	}
@@ -222,7 +226,7 @@ func (s *Service) Preview(ctx context.Context, files []UploadedFile, opt Options
 func (s *Service) loadPlaces(ctx context.Context) ([]*candidate, error) {
 	rows, err := s.db.QueryContext(ctx, `SELECT source_key, name,
 		COALESCE(lat,0), COALESCE(lon,0), COALESCE(lat_gcj,0), COALESCE(lon_gcj,0),
-		is_stub, visit_count FROM places`)
+		is_stub, visit_count, origin FROM places`)
 	if err != nil {
 		return nil, fmt.Errorf("读取已有地点失败: %w", err)
 	}
@@ -232,7 +236,7 @@ func (s *Service) loadPlaces(ctx context.Context) ([]*candidate, error) {
 		var c candidate
 		var stub int
 		var lat, lon, latg, long float64
-		if err := rows.Scan(&c.Key, &c.Name, &lat, &lon, &latg, &long, &stub, &c.Hits); err != nil {
+		if err := rows.Scan(&c.Key, &c.Name, &lat, &lon, &latg, &long, &stub, &c.Hits, &c.Origin); err != nil {
 			return nil, fmt.Errorf("扫描地点失败: %w", err)
 		}
 		c.Lat, c.Lon, c.LatGCJ, c.LonGCJ = lat, lon, latg, long
@@ -338,14 +342,49 @@ func (s *Service) parsePlaces(f *csvin.File, d *csvin.DetectResult, rep *Report,
 		//   ① 本行有真实坐标（没坐标的桩还是桩）；
 		//   ② 该名字在本文件里只出现一次（同名多行 = 多个分支，
 		//      桩该升级成哪一个无从判定）。
-		stub := (*candidate)(nil)
-		if hasCoord && nameCount[name] == 1 {
-			stub = resolver.StubByName(name)
+		// 地点合并判定：库里已经有一个「同一个点」的记录时，不该再插一条。
+		//
+		// 两种情形：
+		//   ① 同名桩（此前只在到访/交通/天气里被提到过，没有自己的坐标）——
+		//      这次地点记录带来了真实坐标，它就该升级成正式地点；
+		//   ② 同名且坐标几乎重合的既有地点（多半是先前由到访坐标派生的
+		//      visit_derived 行）——分批导入时，同一地点会因为「key 用的
+		//      坐标系不同」被存成两行，这里把它并回既有行。
+		//
+		// 两个前置条件：
+		//   a. 本行有真实坐标（没坐标的桩还是桩）；
+		//   b. 该名字在本文件里只出现一次（同名多行 = 多个分支，
+		//      该并到哪一个无从判定）。
+		var merge *candidate
+		if hasCoord {
+			if st := resolver.StubByName(name); st != nil && nameCount[name] == 1 {
+				// 桩没有坐标，无法用距离判定归属：同名在文件里出现多次时
+				// 它该并到哪一行无从判断，放弃合并。
+				merge = st
+			} else {
+				// 按距离判定，而不是「同名是否唯一出现」：实测 36 组同名地点里
+				// 有 12 组的两个坐标相距不到 5 m——那是同一个地点的两次登记，
+				// 按「同名即放弃」会把它们拆成两个地点。而真正的分店相距
+				// 几十米以上（中位 94 m），5 m 阈值不会误合。
+				wLat, wLon := geo.GCJ02ToWGS84(lat, lon)
+				merge = resolver.MatchNearby(name, wLat, wLon, resolver.snapM)
+			}
 		}
-		if stub != nil {
-			// 沿用桩自己的 source_key：到访的 dedup_key 里嵌着 placeKey，
+		if merge != nil {
+			// 沿用既有行的 source_key：到访的 dedup_key 里嵌着 placeKey，
 			// 换键会让历史到访的去重失配，重导时整批重复插入。
-			key = stub.Key
+			key = merge.Key
+			if merge.Origin == "imported" && merge.HasCoord {
+				// 这条记录已经被地点记录处理过了（坐标与地址都补全过），
+				// 再导一遍不产生任何变化，按重复跳过。
+				st.DupSkip++
+				rep = s.addIssue(rep, f.Kind, csvin.Issue{
+					Line: line, RowNo: rowNo, Column: "名称", Field: "source_key", Value: name,
+					Severity: csvin.SevInfo, Code: "INFO_DUP_IDENTICAL",
+					Message: fmt.Sprintf("地点「%s」已导入过，将跳过", name), Hint: "无需处理",
+				})
+				continue
+			}
 		}
 
 		// 同批次内的完全重复行：靠 source_key 自然合并。
@@ -358,7 +397,7 @@ func (s *Service) parsePlaces(f *csvin.File, d *csvin.DetectResult, rep *Report,
 			})
 			continue
 		}
-		if stub == nil && existingKeys[key] {
+		if merge == nil && existingKeys[key] {
 			st.DupSkip++
 			rep = s.addIssue(rep, f.Kind, csvin.Issue{
 				Line: line, RowNo: rowNo, Column: "名称", Field: "source_key", Value: name,
@@ -378,10 +417,10 @@ func (s *Service) parsePlaces(f *csvin.File, d *csvin.DetectResult, rep *Report,
 			Lat: ptr(wLat), Lon: ptr(wLon), LatGCJ: ptr(lat), LonGCJ: ptr(lon),
 			CoordFrame: "wgs84_stored", Origin: "imported",
 		}
-		if stub != nil {
-			// 就地补全桩候选：同一批次里随后的到访/交通/天气就能按真实
+		if merge != nil {
+			// 就地补全候选：同一批次里随后的到访/交通/天气就能按真实
 			// 坐标去解析，而不是退化成「同名无坐标」的唯一命中。
-			resolver.PromoteStub(stub, wLat, wLon, lat, lon)
+			resolver.PromoteStub(merge, wLat, wLon, lat, lon)
 			p.Promote = true
 			p.DisplayName = name
 			promoted++
@@ -424,8 +463,8 @@ func (s *Service) parsePlaces(f *csvin.File, d *csvin.DetectResult, rep *Report,
 		p.Street = optStr(ci.Get(rec, "街道"))
 		p.HouseNumber = optStr(ci.Get(rec, "门牌号"))
 
-		if stub == nil {
-			// 升级分支不新增候选：桩候选已经就地补全了坐标，
+		if merge == nil {
+			// 合并分支不新增候选：候选已经就地补全了坐标，
 			// 再插一个同键候选会让解析误判成「同名多址」。
 			resolver.Add(&candidate{
 				Key: key, Name: name, Lat: wLat, Lon: wLon, LatGCJ: lat, LonGCJ: lon,
@@ -437,7 +476,7 @@ func (s *Service) parsePlaces(f *csvin.File, d *csvin.DetectResult, rep *Report,
 	}
 	if promoted > 0 {
 		rep.Highlights = append(rep.Highlights,
-			fmt.Sprintf("有 %d 个地点此前只在到访/交通/天气里被提到（仅引用桩），这次带来了真实坐标，将升级为正式地点", promoted))
+			fmt.Sprintf("有 %d 个地点将并入库中已有的同名记录（此前只有到访坐标或仅有名字），坐标与地址将被补全", promoted))
 	}
 	return out, rep
 }
