@@ -46,7 +46,11 @@ export default function Timeline() {
         >
           →
         </Button>
-        <Button size="sm" variant={mode === 'day' ? 'primary' : 'ghost'} onClick={() => setMode('day')}>
+        <Button
+          size="sm"
+          variant={mode === 'day' ? 'primary' : 'ghost'}
+          onClick={() => setMode('day')}
+        >
           当天
         </Button>
         <Button
@@ -126,7 +130,9 @@ export default function Timeline() {
                   <div className="flex flex-wrap items-center gap-x-2 gap-y-0.5 text-[11px] text-muted">
                     <span>{v.activity || '未分类'}</span>
                     <span className="tnum">{dur(v.duration_s)}</span>
-                    {v.temp_c != null ? <span className="tnum">{Math.round(v.temp_c)}°</span> : null}
+                    {v.temp_c != null ? (
+                      <span className="tnum">{Math.round(v.temp_c)}°</span>
+                    ) : null}
                     {v.condition ? <span>{v.condition}</span> : null}
                     {v.tags?.map((t) => (
                       <Badge key={t}>{t}</Badge>
@@ -189,10 +195,16 @@ function MonthGrid({
               key={d}
               onClick={() => onPick(d)}
               title={`${d}：${n} 次到访`}
-              className={`grid aspect-square place-items-center rounded text-[11px] transition-colors tnum ${
+              className={`tnum grid aspect-square place-items-center rounded text-[11px] transition-colors ${
                 d === active ? 'ring-1 ring-accent' : ''
               } ${n === 0 ? 'text-faint hover:bg-raised' : 'text-white'}`}
-              style={n > 0 ? { backgroundColor: `color-mix(in srgb, var(--color-accent) ${alpha * 100}%, transparent)` } : undefined}
+              style={
+                n > 0
+                  ? {
+                      backgroundColor: `color-mix(in srgb, var(--color-accent) ${alpha * 100}%, transparent)`
+                    }
+                  : undefined
+              }
             >
               {Number(d.slice(-2))}
             </button>

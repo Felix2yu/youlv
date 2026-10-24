@@ -84,7 +84,15 @@ export const api = {
     frame?: string;
   }) => json<{ items: Visit[]; total: number }>(`/api/timeline/range${qs({ ...p })}`),
 
-  places: (p: { q?: string; city?: string; origin?: string; sort?: string; has_coord?: boolean; limit?: number; offset?: number }) =>
+  places: (p: {
+    q?: string;
+    city?: string;
+    origin?: string;
+    sort?: string;
+    has_coord?: boolean;
+    limit?: number;
+    offset?: number;
+  }) =>
     json<{ items: Place[]; total: number }>(
       `/api/places${qs({ ...p, has_coord: p.has_coord ? '1' : '' })}`
     ),
@@ -107,7 +115,9 @@ export const api = {
   mapBounds: () => json<BBox>('/api/map/bounds'),
 
   weather: (placeId: number, at?: number, approx = true) =>
-    json<Weather>(`/api/weather${qs({ place_id: placeId, at: at || '', approx: approx ? '' : '0' })}`),
+    json<Weather>(
+      `/api/weather${qs({ place_id: placeId, at: at || '', approx: approx ? '' : '0' })}`
+    ),
 
   // ---- 导入 ----
   detect: (files: File[]) => {

@@ -14,8 +14,7 @@ export default function Stats() {
 
   const loading =
     overview.loading || acts.loading || cities.loading || commute.loading || hourly.loading;
-  const err =
-    overview.error ?? acts.error ?? cities.error ?? commute.error ?? hourly.error ?? null;
+  const err = overview.error ?? acts.error ?? cities.error ?? commute.error ?? hourly.error ?? null;
 
   return (
     <div className="mx-auto flex max-w-4xl flex-col gap-3">
@@ -49,11 +48,16 @@ function OverviewCards({ o }: { o: Overview }) {
   return (
     <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-6">
       {cells.map((c) => (
-        <div key={c.label} className="rounded-[var(--radius-card)] border border-line bg-surface px-2.5 py-2">
+        <div
+          key={c.label}
+          className="rounded-[var(--radius-card)] border border-line bg-surface px-2.5 py-2"
+        >
           <div className="text-[11px] text-faint">{c.label}</div>
-          <div className="tnum text-[17px] font-semibold leading-tight">
+          <div className="tnum text-[17px] leading-tight font-semibold">
             {c.value}
-            {c.unit ? <span className="ml-0.5 text-[11px] font-normal text-muted">{c.unit}</span> : null}
+            {c.unit ? (
+              <span className="ml-0.5 text-[11px] font-normal text-muted">{c.unit}</span>
+            ) : null}
           </div>
         </div>
       ))}
@@ -66,7 +70,9 @@ function ActivityPanel({ items }: { items: ActivityStat[] }) {
   const total = items.reduce((a, b) => a + b.duration_s, 0);
   return (
     <Card>
-      <SectionTitle aside={<span className="tnum">共 {durH(total)}</span>}>时间都花在哪</SectionTitle>
+      <SectionTitle aside={<span className="tnum">共 {durH(total)}</span>}>
+        时间都花在哪
+      </SectionTitle>
       <ul className="flex flex-col gap-1.5">
         {items.map((i) => (
           <li key={i.name} className="flex items-center gap-2">
@@ -78,7 +84,9 @@ function ActivityPanel({ items }: { items: ActivityStat[] }) {
             <span className="tnum w-20 shrink-0 text-right text-[12px] text-muted">
               {durH(i.duration_s)}
             </span>
-            <span className="tnum w-12 shrink-0 text-right text-[11px] text-faint">{i.count} 次</span>
+            <span className="tnum w-12 shrink-0 text-right text-[11px] text-faint">
+              {i.count} 次
+            </span>
           </li>
         ))}
       </ul>
@@ -131,7 +139,9 @@ function CommutePanel({ items }: { items: ModeStat[] }) {
             <span className="tnum w-20 shrink-0 text-right text-[12px] text-muted">
               {durH(m.duration_s)}
             </span>
-            <span className="tnum w-12 shrink-0 text-right text-[11px] text-faint">{m.count} 段</span>
+            <span className="tnum w-12 shrink-0 text-right text-[11px] text-faint">
+              {m.count} 段
+            </span>
           </li>
         ))}
       </ul>
@@ -153,7 +163,9 @@ function HourPanel({ items }: { items: HourStat[] }) {
 
   return (
     <Card>
-      <SectionTitle aside={<span className="tnum">峰值 {max} 次</span>}>什么时候在外面</SectionTitle>
+      <SectionTitle aside={<span className="tnum">峰值 {max} 次</span>}>
+        什么时候在外面
+      </SectionTitle>
       <div className="overflow-x-auto">
         <div className="min-w-[520px]">
           <div className="mb-0.5 flex gap-px pl-6">

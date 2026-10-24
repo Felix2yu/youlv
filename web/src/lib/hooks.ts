@@ -65,30 +65,27 @@ export function useRoute(): {
     return () => window.removeEventListener('hashchange', onChange);
   }, []);
 
-  const go = useCallback(
-    (path: string, query?: Record<string, string | number | undefined>) => {
-      let s = `#${path}`;
-      if (query) {
-        const sp = new URLSearchParams();
-        for (const [k, v] of Object.entries(query)) {
-          if (v !== undefined && v !== '') sp.set(k, String(v));
-        }
-        const qs2 = sp.toString();
-        if (qs2) s += `?${qs2}`;
+  const go = useCallback((path: string, query?: Record<string, string | number | undefined>) => {
+    let s = `#${path}`;
+    if (query) {
+      const sp = new URLSearchParams();
+      for (const [k, v] of Object.entries(query)) {
+        if (v !== undefined && v !== '') sp.set(k, String(v));
       }
-      if (window.location.hash === s) {
-        setH(s);
-        return;
-      }
-      window.location.hash = s;
-      try {
-        localStorage.setItem(ROUTE_KEY, s);
-      } catch {
-        // 隐私模式下写不了就算了，不影响导航
-      }
-    },
-    []
-  );
+      const qs2 = sp.toString();
+      if (qs2) s += `?${qs2}`;
+    }
+    if (window.location.hash === s) {
+      setH(s);
+      return;
+    }
+    window.location.hash = s;
+    try {
+      localStorage.setItem(ROUTE_KEY, s);
+    } catch {
+      // 隐私模式下写不了就算了，不影响导航
+    }
+  }, []);
 
   const { path, query } = parseHash();
   return { path, query, go };
@@ -113,7 +110,10 @@ export function restoreRoute(): string {
  * 竞态不能不管：翻月比取数快时，先发的请求可能后到，把新月份的数据盖掉。
  * 这里用自增序号丢弃过期响应，比 AbortController 更省事（GET 请求断掉也浪费）。
  */
-export function useAsync<T>(fn: () => Promise<T>, deps: unknown[]): {
+export function useAsync<T>(
+  fn: () => Promise<T>,
+  deps: unknown[]
+): {
   data: T | null;
   error: string | null;
   loading: boolean;

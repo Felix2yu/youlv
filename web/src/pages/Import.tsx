@@ -27,10 +27,7 @@ export default function Import({ meta }: { meta: Meta | null }) {
   const [overrides, setOverrides] = useState<Record<string, string>>({});
   const inputRef = useRef<HTMLInputElement>(null);
 
-  const blocking = useMemo(
-    () => (detected ?? []).filter((d) => d.blocking),
-    [detected]
-  );
+  const blocking = useMemo(() => (detected ?? []).filter((d) => d.blocking), [detected]);
 
   async function onDetect(list: File[]) {
     setFiles(list);
@@ -187,7 +184,9 @@ export default function Import({ meta }: { meta: Meta | null }) {
         </Card>
       ) : null}
 
-      {step === 3 && report ? <PreviewStep report={report} onNext={() => setStep(4)} onBack={() => setStep(2)} /> : null}
+      {step === 3 && report ? (
+        <PreviewStep report={report} onNext={() => setStep(4)} onBack={() => setStep(2)} />
+      ) : null}
 
       {step === 4 && report ? (
         <ConflictStep
@@ -265,7 +264,11 @@ function PreviewStep({
           <Stat label="总行数" value={num(report.totals.rows)} />
           <Stat label="待导入" value={num(report.totals.ready)} tone="accent" />
           <Stat label="重复跳过" value={num(report.totals.dup_skip)} />
-          <Stat label="无法导入" value={num(report.totals.failed)} tone={errs.length ? 'danger' : undefined} />
+          <Stat
+            label="无法导入"
+            value={num(report.totals.failed)}
+            tone={errs.length ? 'danger' : undefined}
+          />
         </div>
         <table className="w-full text-[12px]">
           <thead className="text-faint">
@@ -326,9 +329,7 @@ function PreviewStep({
           </div>
           <IssueList issues={[...errs, ...warns].slice(0, 200)} />
           {errs.length + warns.length > 200 ? (
-            <div className="mt-2 text-[11px] text-faint">
-              只显示前 200 条，完整清单请下载 CSV。
-            </div>
+            <div className="mt-2 text-[11px] text-faint">只显示前 200 条，完整清单请下载 CSV。</div>
           ) : null}
         </Card>
       ) : null}
@@ -337,7 +338,11 @@ function PreviewStep({
         <Button variant="ghost" onClick={onBack}>
           返回
         </Button>
-        <Button variant="primary" onClick={onNext} disabled={report.totals.ready === 0 && report.conflicts.length === 0}>
+        <Button
+          variant="primary"
+          onClick={onNext}
+          disabled={report.totals.ready === 0 && report.conflicts.length === 0}
+        >
           {report.conflicts.length ? `去裁决 ${report.conflicts.length} 组冲突` : '直接导入'}
         </Button>
       </div>
@@ -361,7 +366,9 @@ function IssueList({ issues }: { issues: Issue[] }) {
       {byCode.map((g) => (
         <li key={g.code} className="rounded border border-line px-2 py-1.5">
           <div className="flex items-center gap-2">
-            <Badge tone={g.severity === 'error' ? 'danger' : g.severity === 'warn' ? 'warn' : 'neutral'}>
+            <Badge
+              tone={g.severity === 'error' ? 'danger' : g.severity === 'warn' ? 'warn' : 'neutral'}
+            >
               {g.n} 条
             </Badge>
             <span className="text-[12px] font-medium">{g.sample.message}</span>
@@ -553,8 +560,7 @@ function Stat({
   value: string;
   tone?: 'accent' | 'danger';
 }) {
-  const color =
-    tone === 'accent' ? 'text-accent' : tone === 'danger' ? 'text-danger' : 'text-ink';
+  const color = tone === 'accent' ? 'text-accent' : tone === 'danger' ? 'text-danger' : 'text-ink';
   return (
     <div className="rounded-md border border-line bg-raised px-2 py-1.5">
       <div className="text-[11px] text-faint">{label}</div>

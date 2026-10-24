@@ -32,10 +32,7 @@ export default function App() {
     }
   }, [meta.data, path, go]);
 
-  const title = useMemo(
-    () => NAV.find((n) => n.path === path)?.label ?? '时间轴',
-    [path]
-  );
+  const title = useMemo(() => NAV.find((n) => n.path === path)?.label ?? '时间轴', [path]);
 
   return (
     <div className="flex min-h-screen bg-paper text-ink">

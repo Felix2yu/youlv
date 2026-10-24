@@ -23,13 +23,7 @@ export function Card({
   );
 }
 
-export function SectionTitle({
-  children,
-  aside
-}: {
-  children: ReactNode;
-  aside?: ReactNode;
-}) {
+export function SectionTitle({ children, aside }: { children: ReactNode; aside?: ReactNode }) {
   return (
     <div className="mb-2 flex items-baseline justify-between gap-3">
       <h2 className="text-[13px] font-semibold tracking-wide text-ink">{children}</h2>
@@ -43,12 +37,7 @@ type BtnProps = ButtonHTMLAttributes<HTMLButtonElement> & {
   size?: 'sm' | 'md';
 };
 
-export function Button({
-  variant = 'ghost',
-  size = 'md',
-  className = '',
-  ...rest
-}: BtnProps) {
+export function Button({ variant = 'ghost', size = 'md', className = '', ...rest }: BtnProps) {
   const base =
     'inline-flex items-center justify-center gap-1.5 rounded-md border font-medium transition-colors disabled:cursor-not-allowed disabled:opacity-45';
   const sizes = {
@@ -109,13 +98,7 @@ export function Spinner({ label }: { label?: string }) {
   );
 }
 
-export function Empty({
-  children,
-  hint
-}: {
-  children: ReactNode;
-  hint?: ReactNode;
-}) {
+export function Empty({ children, hint }: { children: ReactNode; hint?: ReactNode }) {
   return (
     <div className="flex flex-col items-center gap-1 py-10 text-center">
       <div className="text-[13px] text-muted">{children}</div>

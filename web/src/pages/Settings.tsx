@@ -99,7 +99,11 @@ export default function Settings({ meta }: { meta: Meta | null }) {
                 className="flex flex-wrap items-center gap-2 rounded border border-line px-2 py-1.5"
               >
                 <span className="tnum text-[12px] text-muted">{ymd(r.created_at)}</span>
-                <Badge tone={r.status === 'success' ? 'accent' : r.status === 'failed' ? 'danger' : 'neutral'}>
+                <Badge
+                  tone={
+                    r.status === 'success' ? 'accent' : r.status === 'failed' ? 'danger' : 'neutral'
+                  }
+                >
                   {STATUS_TEXT[r.status] ?? r.status}
                 </Badge>
                 <span className="tnum text-[11px] text-faint">{r.batch_no}</span>
