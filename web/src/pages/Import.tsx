@@ -1,6 +1,6 @@
 import { useMemo, useRef, useState } from 'react';
 import { api } from '../lib/api';
-import { bytes, dur, num } from '../lib/format';
+import { bytes, num } from '../lib/format';
 import type { DetectItem, Issue, Meta, Report } from '../lib/types';
 import { Badge, Button, Card, Empty, ErrorBox, SectionTitle, Spinner } from '../components/ui';
 
@@ -65,6 +65,9 @@ export default function Import({ meta }: { meta: Meta | null }) {
     if (!report) return;
     setError(null);
     setBusy(true);
+    // 先切到「执行中」这一步再发请求：导入 1 万多行要一两秒，
+    // 让用户盯着裁决页的按钮等，是最容易被当成卡死的地方。
+    setStep(5);
     try {
       const rep = await api.commit(report.batch_no, {
         weather_strategy: 'old',
@@ -74,6 +77,7 @@ export default function Import({ meta }: { meta: Meta | null }) {
       setStep(6);
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
+      setStep(4);
     } finally {
       setBusy(false);
     }
@@ -135,6 +139,19 @@ export default function Import({ meta }: { meta: Meta | null }) {
               if (list.length) void onDetect(list);
             }}
           />
+          {files.length ? (
+            <ul className="mt-3 flex flex-col gap-1">
+              {files.map((f) => (
+                <li
+                  key={f.name}
+                  className="flex items-center gap-2 rounded border border-line px-2 py-1 text-[12px]"
+                >
+                  <span className="min-w-0 flex-1 truncate">{f.name}</span>
+                  <span className="tnum shrink-0 text-faint">{bytes(f.size)}</span>
+                </li>
+              ))}
+            </ul>
+          ) : null}
           {meta && !meta.has_data ? (
             <p className="mt-3 text-[12px] text-muted">
               库里还没有数据。导入完成后，时间轴、足迹地图和统计就都能用了。
@@ -197,6 +214,20 @@ export default function Import({ meta }: { meta: Meta | null }) {
           onBack={() => setStep(3)}
           busy={busy}
         />
+      ) : null}
+
+      {step === 5 && report ? (
+        <Card>
+          <SectionTitle>正在写入</SectionTitle>
+          <div className="flex flex-col items-center gap-2 py-8">
+            <Spinner label={`正在写入 ${num(report.totals.ready)} 行`} />
+            <p className="max-w-sm text-center text-[12px] leading-relaxed text-muted">
+              整批数据在**一个事务**里写入：中途任何一处出错都会整体回滚，
+              不会出现「地点进了、到访没进」的半截状态。
+            </p>
+            <p className="tnum text-[11px] text-faint">批次 {report.batch_no}</p>
+          </div>
+        </Card>
       ) : null}
 
       {step === 6 && committed ? (

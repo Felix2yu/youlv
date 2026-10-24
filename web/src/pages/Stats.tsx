@@ -1,7 +1,7 @@
 import { useMemo } from 'react';
 import { api } from '../lib/api';
 import { useAsync } from '../lib/hooks';
-import { dur, durH, num } from '../lib/format';
+import { durH, num } from '../lib/format';
 import type { ActivityStat, CityStat, HourStat, ModeStat, Overview } from '../lib/types';
 import { Bar, Card, Dot, ErrorBox, SectionTitle, Spinner } from '../components/ui';
 

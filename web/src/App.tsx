@@ -21,18 +21,27 @@ const NAV = [
 
 export default function App() {
   const { path, go } = useRoute();
-  const [theme] = useTheme();
+  useTheme();
   const meta = useAsync<Meta>(() => api.meta(), []);
 
   // 空库时直接把人带到导入页：一个没有任何数据的足迹应用，
   // 首屏应该是「把数据弄进来」而不是六个空页面。
-  useEffect(() => {
-    if (meta.data && !meta.data.has_data && path !== '/import' && path !== '/settings') {
-      go('/import');
-    }
-  }, [meta.data, path, go]);
+  //
+  // 这里用「渲染期派生」而不是 effect 里改导航：目标是路径在渲染期就能算出来，
+  // 界面立刻切到导入页；effect 只负责把地址栏同步过去（写 URL 是外部系统
+  // 同步，不是 React 状态变更）。effect 里调 go() 属于「副作用改状态」，
+  // 会多渲染一轮，且在 StrictMode 下会跑两次。
+  const wantsImport = meta.data != null && !meta.data.has_data;
+  const targetPath = wantsImport && path !== '/import' && path !== '/settings' ? '/import' : path;
 
-  const title = useMemo(() => NAV.find((n) => n.path === path)?.label ?? '时间轴', [path]);
+  useEffect(() => {
+    if (targetPath !== path) window.location.hash = '#/import';
+  }, [targetPath, path]);
+
+  const title = useMemo(
+    () => NAV.find((n) => n.path === targetPath)?.label ?? '时间轴',
+    [targetPath]
+  );
 
   return (
     <div className="flex min-h-screen bg-paper text-ink">
@@ -46,7 +55,7 @@ export default function App() {
         </div>
         <nav className="flex flex-col gap-0.5">
           {NAV.map((n) => {
-            const active = path === n.path;
+            const active = targetPath === n.path;
             return (
               <button
                 key={n.path}
@@ -98,7 +107,7 @@ export default function App() {
                 key={n.path}
                 onClick={() => go(n.path)}
                 className={`shrink-0 rounded px-2 py-1 text-[12px] ${
-                  path === n.path ? 'bg-accent-soft text-accent' : 'text-muted'
+                  targetPath === n.path ? 'bg-accent-soft text-accent' : 'text-muted'
                 }`}
               >
                 {n.label}
@@ -113,7 +122,7 @@ export default function App() {
               <Spinner label="正在读取数据" />
             </div>
           ) : (
-            <Router path={path} meta={meta.data} />
+            <Router path={targetPath} meta={meta.data} />
           )}
         </main>
       </div>

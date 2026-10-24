@@ -37,8 +37,8 @@ export function useTheme(): [Theme, (t: Theme) => void] {
 
 const ROUTE_KEY = 'youlv.route';
 
-function parseHash(): { path: string; query: URLSearchParams } {
-  const raw = window.location.hash.replace(/^#/, '');
+function parseHash(hash: string): { path: string; query: URLSearchParams } {
+  const raw = hash.replace(/^#/, '');
   const i = raw.indexOf('?');
   const path = (i < 0 ? raw : raw.slice(0, i)) || '/';
   const query = new URLSearchParams(i < 0 ? '' : raw.slice(i + 1));
@@ -57,6 +57,8 @@ export function useRoute(): {
   query: URLSearchParams;
   go: (path: string, query?: Record<string, string | number | undefined>) => void;
 } {
+  // hash 是路由的唯一真源：状态与地址栏不允许各存一份，
+  // 否则「改了状态但没改地址栏」会出现刷新后跳回原页。
   const [h, setH] = useState(() => window.location.hash);
 
   useEffect(() => {
@@ -76,6 +78,7 @@ export function useRoute(): {
       if (qs2) s += `?${qs2}`;
     }
     if (window.location.hash === s) {
+      // 目标就是当前页：hashchange 不会触发，手动同步一次。
       setH(s);
       return;
     }
@@ -87,7 +90,7 @@ export function useRoute(): {
     }
   }, []);
 
-  const { path, query } = parseHash();
+  const { path, query } = parseHash(h);
   return { path, query, go };
 }
 
@@ -108,7 +111,15 @@ export function restoreRoute(): string {
  * 取数小工具：负责 loading / error / 竞态。
  *
  * 竞态不能不管：翻月比取数快时，先发的请求可能后到，把新月份的数据盖掉。
- * 这里用自增序号丢弃过期响应，比 AbortController 更省事（GET 请求断掉也浪费）。
+ * 这里用 alive 标志丢弃过期响应，比 AbortController 更省事（GET 请求断掉也浪费）。
+ *
+ * loading 是**派生值**而不是 effect 里 set 出来的状态：把 deps 序列化成 key，
+ * 「当前 key 还没有结果」即「正在加载」。这样依赖一变化 loading 立刻为真，
+ * 不必等 effect 跑完才亮；reload 时也会亮（老写法在 reload 时不亮，是个 bug）。
+ * 副作用只在 promise 回调里 setState，effect 体内不做同步 setState。
+ *
+ * deps 必须是 JSON 稳定的原始值（字符串/数字/布尔）。现有调用点都满足；
+ * 将来要传对象，请用 useMemo 稳定引用后再传 id 之类的标量。
  */
 export function useAsync<T>(
   fn: () => Promise<T>,
@@ -119,33 +130,38 @@ export function useAsync<T>(
   loading: boolean;
   reload: () => void;
 } {
-  const [data, setData] = useState<T | null>(null);
-  const [error, setError] = useState<string | null>(null);
-  const [loading, setLoading] = useState(true);
+  const key = JSON.stringify(deps);
+  const [state, setState] = useState<{ key: string; data: T | null; error: string | null }>({
+    key: '',
+    data: null,
+    error: null
+  });
   const [nonce, setNonce] = useState(0);
 
   useEffect(() => {
     let alive = true;
-    setLoading(true);
-    setError(null);
     fn()
       .then((d) => {
-        if (alive) {
-          setData(d);
-          setLoading(false);
-        }
+        if (alive) setState({ key, data: d, error: null });
       })
       .catch((e: unknown) => {
         if (alive) {
-          setError(e instanceof Error ? e.message : String(e));
-          setLoading(false);
+          setState({ key, data: null, error: e instanceof Error ? e.message : String(e) });
         }
       });
     return () => {
       alive = false;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [...deps, nonce]);
+  }, [key, nonce]);
 
-  return { data, error, loading, reload: () => setNonce((n) => n + 1) };
+  const loading = state.key !== key;
+
+  return {
+    data: state.data,
+    // 旧一轮的错误不该配上新一轮的 loading。
+    error: state.key === key ? state.error : null,
+    loading,
+    reload: () => setNonce((n) => n + 1)
+  };
 }
