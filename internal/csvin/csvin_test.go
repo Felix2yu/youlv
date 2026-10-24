@@ -212,7 +212,7 @@ func TestFloorHour(t *testing.T) {
 // > 仓库内的脱敏 fixture（CI 走这条，见 testdata/rond-export/README.md）。
 func dataDir(t *testing.T) string {
 	t.Helper()
-	need := []string{"地点记录.csv", "到访记录.csv", "交通记录.csv", "天气数据.csv"}
+	need := []string{"places.csv", "visits.csv", "trips.csv", "weather.csv"}
 	hasAll := func(dir string) bool {
 		for _, n := range need {
 			if _, err := os.Stat(filepath.Join(dir, n)); err != nil {
@@ -242,10 +242,10 @@ func TestRealExports(t *testing.T) {
 		kind Kind
 		rows int
 	}{
-		{"地点记录.csv", KindPlaces, 893},
-		{"到访记录.csv", KindVisits, 4280},
-		{"交通记录.csv", KindTrips, 5143},
-		{"天气数据.csv", KindWeather, 2533},
+		{"places.csv", KindPlaces, 893},
+		{"visits.csv", KindVisits, 4280},
+		{"trips.csv", KindTrips, 5143},
+		{"weather.csv", KindWeather, 2533},
 	}
 	for _, c := range cases {
 		f, err := os.Open(filepath.Join(dir, c.file))

@@ -374,7 +374,7 @@ func TestWeatherConflictGroups(t *testing.T) {
 // 两者都没有时跳过——测试不该因为缺少可选数据集而失败。
 func dataDir(t *testing.T) string {
 	t.Helper()
-	need := []string{"地点记录.csv", "到访记录.csv", "交通记录.csv", "天气数据.csv"}
+	need := []string{"places.csv", "visits.csv", "trips.csv", "weather.csv"}
 	hasAll := func(dir string) bool {
 		for _, n := range need {
 			if _, err := os.Stat(filepath.Join(dir, n)); err != nil {
@@ -404,7 +404,7 @@ func TestRealFullImport(t *testing.T) {
 	ctx := context.Background()
 
 	var files []UploadedFile
-	for _, n := range []string{"地点记录.csv", "到访记录.csv", "交通记录.csv", "天气数据.csv"} {
+	for _, n := range []string{"places.csv", "visits.csv", "trips.csv", "weather.csv"} {
 		b, err := os.ReadFile(filepath.Join(dir, n))
 		if err != nil {
 			t.Skipf("缺少 %s: %v", n, err)

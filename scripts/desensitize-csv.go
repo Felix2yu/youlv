@@ -193,7 +193,7 @@ func run(inDir, outDir string, seed int64) error {
 	}
 
 	// --- 3. 写出 ---
-	if err := writeTable(filepath.Join(outDir, "地点记录.csv"), placesT.header, placesT.rows,
+	if err := writeTable(filepath.Join(outDir, "places.csv"), placesT.header, placesT.rows,
 		func(rec map[string]string) map[string]string {
 			out := clone(rec)
 			out["名称"] = names.get(strings.TrimSpace(rec["名称"]))
@@ -216,7 +216,7 @@ func run(inDir, outDir string, seed int64) error {
 		return err
 	}
 
-	if err := writeTable(filepath.Join(outDir, "到访记录.csv"), visitsT.header, visitsT.rows,
+	if err := writeTable(filepath.Join(outDir, "visits.csv"), visitsT.header, visitsT.rows,
 		func(rec map[string]string) map[string]string {
 			out := clone(rec)
 			name := strings.TrimSpace(rec["地点"])
@@ -238,7 +238,7 @@ func run(inDir, outDir string, seed int64) error {
 		return err
 	}
 
-	if err := writeTable(filepath.Join(outDir, "交通记录.csv"), tripsT.header, tripsT.rows,
+	if err := writeTable(filepath.Join(outDir, "trips.csv"), tripsT.header, tripsT.rows,
 		func(rec map[string]string) map[string]string {
 			out := clone(rec)
 			out["从"] = shiftTime(rec["从"])
@@ -252,7 +252,7 @@ func run(inDir, outDir string, seed int64) error {
 		return err
 	}
 
-	if err := writeTable(filepath.Join(outDir, "天气数据.csv"), weatherT.header, weatherT.rows,
+	if err := writeTable(filepath.Join(outDir, "weather.csv"), weatherT.header, weatherT.rows,
 		func(rec map[string]string) map[string]string {
 			out := clone(rec)
 			out["日期"] = shiftTime(rec["日期"])
@@ -423,13 +423,26 @@ func writeReadme(dir string) error {
 本目录是 **Rond 导出数据的脱敏合成样本**，由
 ` + "`scripts/desensitize-csv.go`" + ` 生成。仓库内**不含任何真实个人轨迹数据**。
 
+## 文件
+
+| 文件 | 内容 | 行数 |
+|---|---|---|
+| ` + "`places.csv`" + ` | 地点记录 | 893 |
+| ` + "`visits.csv`" + ` | 到访记录 | 4280 |
+| ` + "`trips.csv`" + ` | 交通记录 | 5143 |
+| ` + "`weather.csv`" + ` | 天气数据 | 2533 |
+
+文件名用 ASCII 而非上游的中文名：git 在库里对非 ASCII 文件名做转义存储，
+各平台检出行为不完全一致；测试固件用 ASCII 更省心。**导入本身按表头识别
+文件类型，与文件名无关**——真实使用时随便改名都能认出来。
+
 ## 怎么造的
 
 | 项 | 处理 |
 |---|---|
 | 地点名、到访地点、交通起终点、天气地点 | 全表统一映射为「场所-0001…」等合成名（固定种子置换，不可反推） |
 | 活动 / 标签 / 城市 / 省 / 区 / 街道 / 备注 | 同上，分别映射为「活动-…」「标签-…」「城市-…」等 |
-| 坐标 | 地点侧统一平移 (+1.2°, -2.0°)，**仍在��国内** |
+| 坐标 | 地点侧统一平移 (+1.2°, -2.0°)，**仍在境内** |
 | 到访坐标 | **按残差重算**，见下 |
 | 时间 | 整体平移 -728 天（104 整周，星期不变） |
 | 交通方式、天气状况、温湿风等数值 | 原样保留（本身不含隐私，且冲突组依赖其分布） |
@@ -438,10 +451,10 @@ func writeReadme(dir string) error {
 ## 刻意保留的性质（测试依赖它们）
 
 1. **坐标系不变式**：地点表是 GCJ-02，到访表是 WGS-84，且到访坐标
-   ≈ GCJ02ToWGS84(同名地点坐标)，中位偏差 0.64 m、最大 3.12 m。
-   脱敏时必须「地点侧平移、到访侧按残差重算」——直接对经纬度做统一平移会
-   破坏它（GCJ 偏移场随位置变化），导致导入时高置信度记录整批掉下来。
-2. **36 组重名不同址**：同名地点仍有多个坐标，导入时必须靠坐标消歧。
+   ≈ GCJ02ToWGS84(同名地点坐标)。脱敏时必须「地点侧平移、到访侧按残差
+   重算」——直接对经纬度做统一平移会破坏它（GCJ 偏移场随位置变化），
+   导致导入时高置信度记录整批掉下来。
+2. **同名不同址**：同名地点仍有多个坐标，导入时必须靠坐标消歧。
 3. **57 组天气内容冲突**、**114 个重复键**：天气裁决逻辑的用例。
 4. **时间倒挂 1 条、停留 <60s 1 条、>24h 78 条**：校验规则的用例。
 5. **30 条「疑似未换算」的到访**：到访坐标与地点 GCJ-02 原值完全相等，
