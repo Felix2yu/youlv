@@ -10,9 +10,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/yufei/youlv/internal/csvin"
-	"github.com/yufei/youlv/internal/geo"
-	"github.com/yufei/youlv/internal/testdb"
+	"github.com/Felix2yu/youlv/internal/csvin"
+	"github.com/Felix2yu/youlv/internal/geo"
+	"github.com/Felix2yu/youlv/internal/testdb"
 )
 
 func newSvc(t *testing.T) *Service {

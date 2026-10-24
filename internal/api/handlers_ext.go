@@ -6,8 +6,8 @@ import (
 	"net/http"
 	"strconv"
 
-	"github.com/yufei/youlv/internal/importer"
-	"github.com/yufei/youlv/internal/store"
+	"github.com/Felix2yu/youlv/internal/importer"
+	"github.com/Felix2yu/youlv/internal/store"
 )
 
 // 本文件是详情类与设置类端点的 handler。

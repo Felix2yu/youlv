@@ -10,8 +10,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/yufei/youlv/internal/csvin"
-	"github.com/yufei/youlv/internal/geo"
+	"github.com/Felix2yu/youlv/internal/csvin"
+	"github.com/Felix2yu/youlv/internal/geo"
 )
 
 // UploadedFile 是一个已上传的源文件。multipart 解析后落到这里，

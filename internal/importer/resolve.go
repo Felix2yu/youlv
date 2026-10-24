@@ -5,8 +5,8 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/yufei/youlv/internal/csvin"
-	"github.com/yufei/youlv/internal/geo"
+	"github.com/Felix2yu/youlv/internal/csvin"
+	"github.com/Felix2yu/youlv/internal/geo"
 )
 
 // candidate 是一个可供解析的地点条目。

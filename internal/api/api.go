@@ -10,9 +10,9 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/yufei/youlv/internal/importer"
-	"github.com/yufei/youlv/internal/store"
-	"github.com/yufei/youlv/internal/web"
+	"github.com/Felix2yu/youlv/internal/importer"
+	"github.com/Felix2yu/youlv/internal/store"
+	"github.com/Felix2yu/youlv/internal/web"
 )
 
 // Server 持有依赖并对外暴露 http.Handler。

@@ -5,7 +5,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/yufei/youlv/internal/db"
+	"github.com/Felix2yu/youlv/internal/db"
 )
 
 func TestMigrateCreatesAllTables(t *testing.T) {

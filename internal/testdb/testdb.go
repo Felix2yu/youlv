@@ -10,7 +10,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/yufei/youlv/internal/db"
+	"github.com/Felix2yu/youlv/internal/db"
 )
 
 // New 返回已迁移到最新版本的临时库，测试结束时自动关闭。

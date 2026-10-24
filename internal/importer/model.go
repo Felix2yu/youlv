@@ -1,6 +1,6 @@
 package importer
 
-import "github.com/yufei/youlv/internal/csvin"
+import "github.com/Felix2yu/youlv/internal/csvin"
 
 // Options 是导入选项。整批四份文件共用一套，并快照进 imports.options_json，
 // 使回滚后能按同样选项重导。

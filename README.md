@@ -24,6 +24,15 @@
 # 浏览器打开 http://127.0.0.1:8802
 ```
 
+### 直接安装
+
+```bash
+go install github.com/Felix2yu/youlv/cmd/youlv@latest
+youlv -addr :8802
+```
+
+模块路径与仓库地址一致（`github.com/Felix2yu/youlv`），`go install` 可直接引用。
+
 ### Docker
 
 ```bash

@@ -12,11 +12,11 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/yufei/youlv/internal/api"
-	"github.com/yufei/youlv/internal/config"
-	"github.com/yufei/youlv/internal/db"
-	"github.com/yufei/youlv/internal/importer"
-	"github.com/yufei/youlv/internal/store"
+	"github.com/Felix2yu/youlv/internal/api"
+	"github.com/Felix2yu/youlv/internal/config"
+	"github.com/Felix2yu/youlv/internal/db"
+	"github.com/Felix2yu/youlv/internal/importer"
+	"github.com/Felix2yu/youlv/internal/store"
 )
 
 func main() {

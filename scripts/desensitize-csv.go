@@ -31,7 +31,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/yufei/youlv/internal/geo"
+	"github.com/Felix2yu/youlv/internal/geo"
 )
 
 var (

@@ -8,9 +8,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/yufei/youlv/internal/importer"
-	"github.com/yufei/youlv/internal/store"
-	"github.com/yufei/youlv/internal/testdb"
+	"github.com/Felix2yu/youlv/internal/importer"
+	"github.com/Felix2yu/youlv/internal/store"
+	"github.com/Felix2yu/youlv/internal/testdb"
 )
 
 func newTestServer(t *testing.T) *Server {
