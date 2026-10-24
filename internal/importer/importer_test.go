@@ -2,6 +2,7 @@ package importer
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"math"
 	"os"
@@ -723,5 +724,86 @@ func TestSplitImportDoesNotDuplicatePlaces(t *testing.T) {
 	}
 	if noCoord != 0 {
 		t.Errorf("并入后仍有 %d 个地点没有坐标", noCoord)
+	}
+}
+
+// ---------- 报告的 JSON 契约：列表字段必须是 []，不能是 null ----------
+
+// TestReportListsSerializeAsArrays 锁定报告的 JSON 形状。
+//
+// 背景：Go 的 nil 切片序列化成 null，而前端的 TS 类型把这四个字段声明为数组，
+// 直接读 .length 会抛 "Cannot read properties of null (reading 'length')"。
+// 这个坑真实发生过 —— 预检无冲突时 conflicts 就是 null，
+// 设置页展开批次详情直接崩在渲染上。
+func TestReportListsSerializeAsArrays(t *testing.T) {
+	s := newSvc(t)
+	ctx := context.Background()
+
+	rep, err := s.Preview(ctx, []UploadedFile{
+		upload("地点记录.csv", samplePlaces),
+		upload("到访记录.csv", sampleVisits),
+	}, DefaultOptions())
+	if err != nil {
+		t.Fatalf("Preview: %v", err)
+	}
+
+	raw, err := json.Marshal(rep)
+	if err != nil {
+		t.Fatalf("Marshal: %v", err)
+	}
+	var m map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &m); err != nil {
+		t.Fatalf("Unmarshal: %v", err)
+	}
+	for _, field := range []string{"files", "issues", "conflicts", "highlights", "blocking"} {
+		got := string(m[field])
+		if got == "null" {
+			t.Errorf("字段 %s 序列化成 null，应为 []", field)
+			continue
+		}
+		if got != "[]" && !strings.HasPrefix(got, "[") {
+			t.Errorf("字段 %s = %s，应为数组", field, got)
+		}
+	}
+}
+
+// TestReportNormalizesLegacyNullLists 覆盖历史批次。
+//
+// 修复前落库的 report_json 里存的就是 null（当时 Report 是零值构造的），
+// 反序列化回来仍是 nil。这类批次不经过 Preview 构造，只能靠读取时归一化兜住。
+func TestReportNormalizesLegacyNullLists(t *testing.T) {
+	s := newSvc(t)
+	ctx := context.Background()
+
+	rep, err := s.Preview(ctx, []UploadedFile{
+		upload("地点记录.csv", samplePlaces),
+	}, DefaultOptions())
+	if err != nil {
+		t.Fatalf("Preview: %v", err)
+	}
+
+	// 手工把库里存的 report_json 改回「修复前」的形状：四个列表字段都是 null。
+	legacy := `{"batch_no":"` + rep.BatchNo + `","status":"preview","files":null,` +
+		`"issues":null,"conflicts":null,"highlights":null,"blocking":null}`
+	if _, err := s.db.Exec(`UPDATE imports SET report_json=? WHERE batch_no=?`, legacy, rep.BatchNo); err != nil {
+		t.Fatalf("改写 report_json: %v", err)
+	}
+
+	got, err := s.Report(ctx, rep.BatchNo)
+	if err != nil {
+		t.Fatalf("Report: %v", err)
+	}
+	if got.Conflicts == nil || got.Issues == nil || got.Highlights == nil ||
+		got.Blocking == nil || got.Files == nil {
+		t.Fatalf("读取历史批次时未归一化：conflicts=%v issues=%v highlights=%v blocking=%v files=%v",
+			got.Conflicts, got.Issues, got.Highlights, got.Blocking, got.Files)
+	}
+
+	raw, err := json.Marshal(got)
+	if err != nil {
+		t.Fatalf("Marshal: %v", err)
+	}
+	if strings.Contains(string(raw), `"conflicts":null`) {
+		t.Errorf("历史批次的 conflicts 仍序列化成 null：%s", raw)
 	}
 }

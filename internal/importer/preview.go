@@ -45,7 +45,19 @@ func (s *Service) Preview(ctx context.Context, files []UploadedFile, opt Options
 	started := time.Now()
 	batchNo := newBatchNo()
 
-	rep := &Report{BatchNo: batchNo, Status: StatusPreview, Options: opt}
+	// 四个切片必须初始化成非 nil：Go 的 nil 切片会序列化成 JSON null，
+	// 而前端（与 TS 类型声明）按数组处理 —— 直接读 .length 就会抛
+	// "Cannot read properties of null (reading 'length')"。
+	rep := &Report{
+		BatchNo:    batchNo,
+		Status:     StatusPreview,
+		Options:    opt,
+		Files:      []FileStat{},
+		Issues:     []csvin.Issue{},
+		Conflicts:  []ConflictGroup{},
+		Highlights: []string{},
+		Blocking:   []string{},
+	}
 
 	// --- 1. 解码与类型识别 ---
 	decoded := make([]*csvin.File, 0, len(files))

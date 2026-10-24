@@ -122,6 +122,7 @@ func (s *Service) Report(ctx context.Context, batchNo string) (*Report, error) {
 		return nil, fmt.Errorf("解析批次报告失败: %w", err)
 	}
 	rep.Status = status
+	rep.normalizeSlices()
 	return &rep, nil
 }
 

@@ -108,6 +108,32 @@ type Report struct {
 	DurationMS int64 `json:"duration_ms,omitempty"`
 }
 
+// normalizeSlices 把 nil 切片换成空切片。
+//
+// Go 的 nil 切片会序列化成 JSON null，而 Report 的四个列表字段在前端
+// （与 TS 类型声明）都是数组。旧批次存下的 report_json 里就是 null，
+// 反序列化回来仍是 nil —— 前端直接读 .length 会抛
+// "Cannot read properties of null (reading 'length')"。
+//
+// 新批次由 Preview 构造时就已经初始化过，这里同时兜住历史数据。
+func (r *Report) normalizeSlices() {
+	if r.Files == nil {
+		r.Files = []FileStat{}
+	}
+	if r.Issues == nil {
+		r.Issues = []csvin.Issue{}
+	}
+	if r.Conflicts == nil {
+		r.Conflicts = []ConflictGroup{}
+	}
+	if r.Highlights == nil {
+		r.Highlights = []string{}
+	}
+	if r.Blocking == nil {
+		r.Blocking = []string{}
+	}
+}
+
 // Decisions 是用户在裁决步骤做出的选择。
 type Decisions struct {
 	GlobalStrategy  string `json:"global_strategy"`
