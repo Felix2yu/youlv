@@ -4,8 +4,10 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log"
+	"os"
 	"time"
 )
 
@@ -171,3 +173,48 @@ type BatchSummary struct {
 
 // Cleanup 清掉超过 maxAge 的暂存目录。服务启动时调用一次。
 func (s *Service) Cleanup(maxAge time.Duration) int { return cleanupStaged(s.tmpDir, maxAge) }
+
+// ErrBatchHasData 表示批次已成功导入，不能直接删除其审计记录。
+// API 层据此返回 409（与「批次不存在」的 404 区分开）。
+var ErrBatchHasData = errors.New("该批次已成功导入，请先撤销再删除记录")
+
+// DeleteBatch 删除一个批次的**审计记录**（不碰业务数据）。
+//
+// 与 Rollback 的分工：
+//   - Rollback 删业务数据，保留审计行（status 置 rolled_back）；
+//   - DeleteBatch 删审计行本身（imports 行 + 级联的 imports_files / import_issues）。
+//
+// 已成功导入的批次不允许直接删：visits.import_batch_id 是指向 imports 的外键，
+// 删掉 imports 行会让它被 SET NULL，此后这批数据就再也按批次回滚不掉了。
+// 因此要先撤销（Rollback）再删记录。
+func (s *Service) DeleteBatch(ctx context.Context, batchNo string) error {
+	var importID int64
+	var status string
+	if err := s.db.QueryRowContext(ctx,
+		`SELECT id, status FROM imports WHERE batch_no=?`, batchNo).Scan(&importID, &status); err != nil {
+		return fmt.Errorf("批次 %s 不存在: %w", batchNo, err)
+	}
+	if status == StatusSuccess {
+		return fmt.Errorf("%w：批次 %s", ErrBatchHasData, batchNo)
+	}
+
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	// imports_files / import_issues 的 import_id 带 ON DELETE CASCADE，
+	// 删掉 imports 行它们会一并消失。
+	if _, err := tx.ExecContext(ctx, `DELETE FROM imports WHERE id=?`, importID); err != nil {
+		return err
+	}
+	if err := tx.Commit(); err != nil {
+		return err
+	}
+
+	// 暂存目录是预检产物，一并清掉。
+	if err := os.RemoveAll(s.stageDir(batchNo)); err != nil {
+		return err
+	}
+	return nil
+}

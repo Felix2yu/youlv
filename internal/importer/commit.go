@@ -362,8 +362,18 @@ func (s *Service) commitVisits(ctx context.Context, tx *sql.Tx, rows []stagedVis
 
 func (s *Service) linkTags(ctx context.Context, tx *sql.Tx, visitID int64, tags []string) error {
 	for _, t := range tags {
+		// 标签颜色此前是个永远为空的死列（表里有 color，前端拿到的却是空串）。
+		// 这里按标签在字典里的序号取调色板色：同一标签在任何批次导入
+		// 都得到同一个颜色（序号来自 id，跨批次稳定）。
+		var seq int
+		if err := tx.QueryRowContext(ctx,
+			`SELECT COALESCE((SELECT COUNT(*) FROM tags WHERE name <= ?), 0)`, t).Scan(&seq); err != nil {
+			return fmt.Errorf("统计标签序号失败: %w", err)
+		}
 		if _, err := tx.ExecContext(ctx,
-			`INSERT INTO tags(name) VALUES(?) ON CONFLICT(name) DO NOTHING`, t); err != nil {
+			`INSERT INTO tags(name, color) VALUES(?,?)
+			 ON CONFLICT(name) DO UPDATE SET color=CASE WHEN tags.color='' THEN excluded.color ELSE tags.color END`,
+			t, store.TagColor(seq)); err != nil {
 			return fmt.Errorf("写入标签失败: %w", err)
 		}
 		if _, err := tx.ExecContext(ctx, `

@@ -61,7 +61,13 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("GET /api/timeline/range", h(s.timelineRange))
 
 	s.mux.HandleFunc("GET /api/places", h(s.places))
+	s.mux.HandleFunc("GET /api/places/stats", h(s.placesStats))
 	s.mux.HandleFunc("GET /api/activities", h(s.activities))
+	s.mux.HandleFunc("GET /api/tags", h(s.tags))
+	s.mux.HandleFunc("GET /api/visits/{id}", h(s.visitDetail))
+
+	s.mux.HandleFunc("GET /api/settings", h(s.settings))
+	s.mux.HandleFunc("PUT /api/settings", h(s.settingsUpdate))
 
 	s.mux.HandleFunc("GET /api/stats/overview", h(s.statsOverview))
 	s.mux.HandleFunc("GET /api/stats/activities", h(s.statsActivities))
@@ -71,6 +77,7 @@ func (s *Server) routes() {
 
 	s.mux.HandleFunc("GET /api/map/points", h(s.mapPoints))
 	s.mux.HandleFunc("GET /api/map/bounds", h(s.mapBounds))
+	s.mux.HandleFunc("GET /api/map/tiles", h(s.mapTiles))
 
 	s.mux.HandleFunc("GET /api/weather", h(s.weather))
 
@@ -80,6 +87,7 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("POST /api/imports/{batchNo}/rollback", h(s.importRollback))
 	s.mux.HandleFunc("GET /api/imports", h(s.importList))
 	s.mux.HandleFunc("GET /api/imports/{batchNo}", h(s.importDetail))
+	s.mux.HandleFunc("DELETE /api/imports/{batchNo}", h(s.importDelete))
 	s.mux.HandleFunc("GET /api/imports/{batchNo}/issues", h(s.importIssues))
 	s.mux.HandleFunc("GET /api/imports/{batchNo}/issues.csv", h(s.importIssuesCSV))
 }

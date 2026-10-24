@@ -36,6 +36,30 @@ func ActivityColor(i int) string {
 	return activityPalette[i%len(activityPalette)]
 }
 
+// tagPalette 是标签的调色板。
+//
+// 与活动调色板分开：标签和活动是两套独立的分类维度，共用一套色会让
+// 「家」与「家」出现在两个维度时颜色相同，视觉上分不清是哪一维。
+var tagPalette = [...]string{
+	"#8a6ba8", // 紫藤
+	"#2e7d7b", // 孔雀青
+	"#b0623a", // 赭石
+	"#3d6d9e", // 靛蓝
+	"#96700f", // 芥末
+	"#a3452f", // 砖红
+	"#556b2f", // 橄榄
+	"#946b2d", // 土黄
+	"#4f7d2f", // 草绿
+	"#8c5a3c", // 棕褐
+	"#666f85", // 蓝灰
+	"#a85751", // 玫瑰
+}
+
+// TagColor 按序号循环取标签调色板色。
+func TagColor(i int) string {
+	return tagPalette[i%len(tagPalette)]
+}
+
 // EnsureActivityColors 给仍是兜底灰的活动按 sort_order 上色。
 //
 // 为什么要回填：调色板分配是 Commit 时做的，但历史上已导入的批次
