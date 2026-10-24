@@ -1,0 +1,74 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+  pull_request:
+    branches: [main]
+  release:
+    types: [published]
+  # 公共基镜 ghcr.io/felix2yu/base 更新后由 .github 仓库的 base-image.yml 触发即时重建，
+  # 把新基镜带进镜像（build 时 pull:true 重解析 tag）。下面的每周 schedule 是兜底。
+  repository_dispatch:
+    types: [base-image-updated]
+  schedule:
+    - cron: '0 3 * * 1'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  test:
+    uses: Felix2yu/.github/.github/workflows/reusable-test.yml@v1
+    secrets:
+      CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
+    with:
+      # go.mod 在仓库根；internal/web/dist 只有 .gitkeep 占位，
+      # 未构建前端时 ./... 也能编译通过
+      go-dir: .
+      test-packages: ./...
+      web-dir: web
+      web-lint-command: pnpm run lint
+      # 把真实产物摆进 embed 位：让 embed 相关用例真跑起来（而非在
+      # 「没有产物」的状态下空转），也顺带验证打包路径本身
+      frontend-stage-command: |
+        rm -rf internal/web/dist
+        mkdir -p internal/web/dist
+        cp -R web/dist/. internal/web/dist/
+
+  image:
+    needs: test
+    permissions:
+      contents: read
+      packages: write
+    uses: Felix2yu/.github/.github/workflows/reusable-image.yml@v1
+    with:
+      go-dir: .
+      main-package: ./cmd/youlv
+      binary-name: youlv
+      image-name: ghcr.io/felix2yu/youlv
+      web-dir: web
+      # 前端产物必须落到 internal/web/dist：internal/web 用 go:embed all:dist 打包它
+      frontend-stage-command: |
+        mkdir -p internal/web/dist
+        cp -R web/dist/. internal/web/dist/
+
+  release:
+    if: github.event_name == 'release'
+    permissions:
+      contents: write
+    uses: Felix2yu/.github/.github/workflows/reusable-release.yml@v1
+    with:
+      go-dir: .
+      main-package: ./cmd/youlv
+      binary-name: youlv
+      web-dir: web
+      frontend-stage-command: |
+        mkdir -p internal/web/dist
+        cp -R web/dist/. internal/web/dist/

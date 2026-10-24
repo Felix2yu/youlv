@@ -1,0 +1,46 @@
+# 「游履」单机部署：直接拉取 CI 构建好的镜像，不在服务器上本地构建。
+#
+# 用法：
+#   docker compose pull && docker compose up -d
+#   浏览器打开 http://<服务器地址>:8802
+#
+# 数据放在具名卷里而不是绑定挂载：具名卷由 Docker 按容器内用户归属初始化，天然无权限问题。
+# 若确实想绑定挂载到宿主目录（如 ./data:/app/data），无需手动 chown —— 只要在下方 environment
+# 里设 PUID / PGID 为宿主目录的属主 uid/gid，基镜的降权入口会自动把 /app/data chown 到该身份，
+# 从而让 SQLite（WAL 模式，需对 /app/data 可写）正常写入。不设置时默认 1000:1000。
+
+services:
+  youlv:
+    # 默认跟随 latest。要钉住某个版本就把 .env 里的 YOULV_TAG 设成对应的 commit sha。
+    image: ghcr.io/felix2yu/youlv:${YOULV_TAG:-latest}
+    container_name: youlv
+    restart: unless-stopped
+
+    ports:
+      # 默认只监听所有网卡的 8802。若前面已有反向代理，改成 "127.0.0.1:8802:8802" 更稳妥。
+      - "8802:8802"
+
+    environment:
+      # 时区决定「今天」的归属与到访时刻的本地化展示，务必与使用者一致。
+      TZ: ${TZ:-Asia/Shanghai}
+      YOULV_DATA_DIR: /app/data
+      # 外部备份工具（docker-db-auto-backup）经 docker exec 触发本应用的导出。
+      # 二进制在 /app/youlv，而 /app 不在 PATH 上，命令必须写成绝对路径：
+      #   docker exec youlv /app/youlv backup > youlv-备份.db
+      # EXT/USER 让工具按 SQLite 快照校验产物，并以数据属主身份执行——docker exec
+      # 不经过入口脚本，默认是 root，属主错误的 -shm 会让降权运行的应用打不开库。
+      # 基镜烘入 PUID/PGID=1000，工具据此派生出的身份与下面写的值一致；这里显式
+      # 声明只是把口径钉死。若把 PUID/PGID 改成别的值，BACKUP_SQLITE_USER 要同步改。
+      BACKUP_SQLITE_CMD: "/app/youlv backup"
+      BACKUP_SQLITE_EXT: db
+      BACKUP_SQLITE_USER: "1000:1000"
+      # 运行身份：绑定挂载到宿主目录时，设成宿主目录的属主 uid/gid。
+      # 用 `id <你的用户>` 查宿主属主；不设则默认 1000:1000。
+      # PUID: ${PUID:-1000}
+      # PGID: ${PGID:-1000}
+
+    volumes:
+      - youlv-data:/app/data
+
+volumes:
+  youlv-data:

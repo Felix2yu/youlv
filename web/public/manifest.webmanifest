@@ -1,0 +1,19 @@
+{
+  "name": "游履",
+  "short_name": "游履",
+  "description": "记录每天到过哪里，把走过的路攒成一份自己的地图。",
+  "lang": "zh-CN",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "background_color": "#fbfaf7",
+  "theme_color": "#2f6b4f",
+  "icons": [
+    {
+      "src": "/favicon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any"
+    }
+  ]
+}

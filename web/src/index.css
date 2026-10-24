@@ -1,0 +1,104 @@
+@import 'tailwindcss';
+
+/* 深色走 class 策略而不是默认的 prefers-color-scheme：
+   应用内要能手动覆盖系统外观，并在 localStorage 里记住选择。 */
+@custom-variant dark (&:where(.dark, .dark *));
+
+@theme {
+  --font-sans:
+    -apple-system, BlinkMacSystemFont, 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei',
+    'Segoe UI', Roboto, sans-serif;
+  --font-mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+
+  --color-paper: #fbfaf7;
+  --color-surface: #ffffff;
+  --color-raised: #f4f2ed;
+  --color-line: #e5e1d8;
+  --color-line-strong: #d3cec1;
+  --color-ink: #1c1f21;
+  --color-muted: #6b6f73;
+  --color-faint: #9a9ea1;
+
+  --color-accent: #2f6b4f;
+  --color-accent-soft: #e6efe9;
+  --color-accent-line: #a8c6b5;
+
+  --color-warn: #9a6712;
+  --color-warn-soft: #fdf3e2;
+  --color-danger: #a33a2e;
+  --color-danger-soft: #fbeceb;
+  --color-info: #2d5b8a;
+  --color-info-soft: #e9f0f7;
+
+  --radius-card: 0.625rem;
+}
+
+.dark {
+  --color-paper: #16181a;
+  --color-surface: #1d2022;
+  --color-raised: #24282a;
+  --color-line: #2e3235;
+  --color-line-strong: #3d4245;
+  --color-ink: #e8e6e1;
+  --color-muted: #9ba0a4;
+  --color-faint: #6e7478;
+
+  --color-accent: #6cc79a;
+  --color-accent-soft: #1e332a;
+  --color-accent-line: #35614a;
+
+  --color-warn: #d9a441;
+  --color-warn-soft: #33280f;
+  --color-danger: #e08074;
+  --color-danger-soft: #38201d;
+  --color-info: #7fb0dd;
+  --color-info-soft: #1b2734;
+}
+
+@layer base {
+  html {
+    -webkit-text-size-adjust: 100%;
+  }
+
+  body {
+    background-color: var(--color-paper);
+    color: var(--color-ink);
+    font-family: var(--font-sans);
+    /* 必须是 auto 而不是 antialiased：灰底上的中文在 -webkit-font-smoothing:
+       antialiased 下会明显变细、发虚，尤其小字号。 */
+    -webkit-font-smoothing: auto;
+    -moz-osx-font-smoothing: auto;
+    font-size: 14px;
+    line-height: 1.5;
+  }
+
+  /* 数字统一等宽：统计页的数字列不对齐，多半是比例数字在作祟。 */
+  .tnum {
+    font-variant-numeric: tabular-nums;
+  }
+
+  ::selection {
+    background: var(--color-accent-soft);
+    color: var(--color-ink);
+  }
+
+  /* 细滚动条：默认滚动条在紧凑布局里很抢眼。 */
+  * {
+    scrollbar-width: thin;
+    scrollbar-color: var(--color-line-strong) transparent;
+  }
+
+  *::-webkit-scrollbar {
+    width: 8px;
+    height: 8px;
+  }
+
+  *::-webkit-scrollbar-thumb {
+    background: var(--color-line-strong);
+    border-radius: 4px;
+  }
+
+  *::-webkit-scrollbar-track {
+    background: transparent;
+  }
+}

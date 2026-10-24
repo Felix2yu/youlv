@@ -1,0 +1,48 @@
+# 构建产物
+/bin/
+/internal/web/dist/*
+# 只留一个 .gitkeep：让没跑过 scripts/build.sh 的机器上 //go:embed all:dist 也能编译
+!/internal/web/dist/.gitkeep
+/web/dist/
+
+# 依赖
+/web/node_modules/
+# 统一 pnpm：其他包管理器的锁文件不入库。双锁并存会让「按 lockfile 猜包管理器」猜错。
+package-lock.json
+yarn.lock
+bun.lock
+bun.lockb
+
+# 运行时数据（本地数据库，不应入库）
+/data/
+*.db
+*.db-wal
+*.db-shm
+
+# 部署时的本地配置
+.env
+
+# WorkBuddy 工作区数据（本地工作记忆与日志，属个人环境，不入库）
+.workbuddy/
+
+# 杂项
+.DS_Store
+*.log
+
+# 测试覆盖率产物（CI 生成后上传 Codecov，不入库）
+coverage.out
+coverage.html
+
+# ---- AI Agent 生成目录（不进版本库，本地保留）----
+.workbuddy/
+.trae/
+.trea/
+.qoder/
+.opencode/
+.cursor/
+.claude/
+.codex/
+.gemini/
+.continue/
+.windsurf/
+.aider*
