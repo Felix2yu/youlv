@@ -102,7 +102,18 @@ func (s *Service) Preview(ctx context.Context, files []UploadedFile, opt Options
 	}
 	existingKeys := make(map[string]bool, len(existing))
 	for _, c := range existing {
+		if c.IsStub {
+			// 桩的 source_key 不进 existingKeys：它还没被正式导入过，
+			// 本批次若带来同名地点的真实坐标，应当升级它而不是跳过。
+			continue
+		}
 		existingKeys[c.Key] = true
+		// 已升级过的桩（is_stub=0 但 source_key 仍是桩键）要额外登记
+		// 坐标键：CSV 里算出来的键是「名字 + 坐标」，与桩键对不上，
+		// 不登记就会把同一个地点重复插一条。
+		if strings.HasPrefix(c.Key, "stub:") && c.HasCoord {
+			existingKeys[PlaceSourceKey(c.Name, c.LatGCJ, c.LonGCJ, true)] = true
+		}
 	}
 
 	// --- 3. 按依赖顺序解析：地点 → 到访 → 交通 → 天气 ---
@@ -257,7 +268,16 @@ func (s *Service) parsePlaces(f *csvin.File, d *csvin.DetectResult, rep *Report,
 	st := s.stat(csvin.KindPlaces, rep)
 	var out []stagedPlace
 	seen := map[string]bool{}
+	var promoted int
+
+	// 预统计每个名字在本文件里出现几次。
+	//
+	// 同名多行意味着这个地点有多个分支（连锁分店），桩该升级成哪一个
+	// 无法判定——这种情况下宁可少升级，也不要把坐标写到错的分支上。
 	nameCount := map[string]int{}
+	for _, rec := range f.Records {
+		nameCount[strings.TrimSpace(ci.Get(rec, "名称"))]++
+	}
 
 	for i, rec := range f.Records {
 		rowNo := i + 1
@@ -310,6 +330,24 @@ func (s *Service) parsePlaces(f *csvin.File, d *csvin.DetectResult, rep *Report,
 		hasCoord := !zero
 		key := PlaceSourceKey(name, lat, lon, hasCoord)
 
+		// 桩升级判定：库里有个同名桩（此前只在到访/交通/天气里被提到过），
+		// 这次地点记录带来了它的真实坐标——那它就该升级成正式地点，
+		// 而不是旁边再插一条同名的新地点。
+		//
+		// 两个前置条件：
+		//   ① 本行有真实坐标（没坐标的桩还是桩）；
+		//   ② 该名字在本文件里只出现一次（同名多行 = 多个分支，
+		//      桩该升级成哪一个无从判定）。
+		stub := (*candidate)(nil)
+		if hasCoord && nameCount[name] == 1 {
+			stub = resolver.StubByName(name)
+		}
+		if stub != nil {
+			// 沿用桩自己的 source_key：到访的 dedup_key 里嵌着 placeKey，
+			// 换键会让历史到访的去重失配，重导时整批重复插入。
+			key = stub.Key
+		}
+
 		// 同批次内的完全重复行：靠 source_key 自然合并。
 		if seen[key] {
 			st.DupSkip++
@@ -320,7 +358,7 @@ func (s *Service) parsePlaces(f *csvin.File, d *csvin.DetectResult, rep *Report,
 			})
 			continue
 		}
-		if existingKeys[key] {
+		if stub == nil && existingKeys[key] {
 			st.DupSkip++
 			rep = s.addIssue(rep, f.Kind, csvin.Issue{
 				Line: line, RowNo: rowNo, Column: "名称", Field: "source_key", Value: name,
@@ -330,7 +368,6 @@ func (s *Service) parsePlaces(f *csvin.File, d *csvin.DetectResult, rep *Report,
 			continue
 		}
 		seen[key] = true
-		nameCount[name]++
 
 		// 坐标系换算：CSV 是 GCJ-02，权威存储是 WGS-84。
 		wLat, wLon := geo.GCJ02ToWGS84(lat, lon)
@@ -340,6 +377,14 @@ func (s *Service) parsePlaces(f *csvin.File, d *csvin.DetectResult, rep *Report,
 			SourceKey: key, Name: name, DisplayName: name,
 			Lat: ptr(wLat), Lon: ptr(wLon), LatGCJ: ptr(lat), LonGCJ: ptr(lon),
 			CoordFrame: "wgs84_stored", Origin: "imported",
+		}
+		if stub != nil {
+			// 就地补全桩候选：同一批次里随后的到访/交通/天气就能按真实
+			// 坐标去解析，而不是退化成「同名无坐标」的唯一命中。
+			resolver.PromoteStub(stub, wLat, wLon, lat, lon)
+			p.Promote = true
+			p.DisplayName = name
+			promoted++
 		}
 		if !hasCoord {
 			p.Lat, p.Lon, p.LatGCJ, p.LonGCJ = nil, nil, nil, nil
@@ -379,12 +424,20 @@ func (s *Service) parsePlaces(f *csvin.File, d *csvin.DetectResult, rep *Report,
 		p.Street = optStr(ci.Get(rec, "街道"))
 		p.HouseNumber = optStr(ci.Get(rec, "门牌号"))
 
-		resolver.Add(&candidate{
-			Key: key, Name: name, Lat: wLat, Lon: wLon, LatGCJ: lat, LonGCJ: lon,
-			HasCoord: hasCoord,
-		})
+		if stub == nil {
+			// 升级分支不新增候选：桩候选已经就地补全了坐标，
+			// 再插一个同键候选会让解析误判成「同名多址」。
+			resolver.Add(&candidate{
+				Key: key, Name: name, Lat: wLat, Lon: wLon, LatGCJ: lat, LonGCJ: lon,
+				HasCoord: hasCoord,
+			})
+		}
 		out = append(out, p)
 		st.Ready++
+	}
+	if promoted > 0 {
+		rep.Highlights = append(rep.Highlights,
+			fmt.Sprintf("有 %d 个地点此前只在到访/交通/天气里被提到（仅引用桩），这次带来了真实坐标，将升级为正式地点", promoted))
 	}
 	return out, rep
 }
@@ -594,11 +647,18 @@ func (s *Service) parseTrips(f *csvin.File, d *csvin.DetectResult, rep *Report,
 		}
 		dur := to.Unix - from.Unix
 
-		// 实测「时长 (s)」与「至 - 从」0 行不符；一旦不符以时间差为准并告警。
+		// 声明时长与起止时间差的一致性判定。
+		//
+		// 为什么用 1 秒容差而不是严格相等：Rond 导出时把「时长 (s)」按整秒
+		// 截断，起止时刻也按整秒存储，两边各自截断一次就会差 1 秒。实测
+		// 5143 行里有 2386 行差 1 秒、0 行差 2 秒以上——严格相等会把
+		// 2386 条纯噪声报成告警，占全部 issue 的 88%，真正需要人看的
+		// 问题会被淹没。容差取 1 秒：差 2 秒以上才算声明与实际对不上。
+		const durationTolerance = 1
 		var declared *int64
 		if v, ok := csvin.ParseInt(ci.Get(rec, "时长 (s)")); ok {
 			declared = ptr(int64(v))
-			if int64(v) != dur {
+			if d := int64(v) - dur; d > durationTolerance || d < -durationTolerance {
 				st.Warned++
 				rep = s.addIssue(rep, f.Kind, csvin.Issue{
 					Line: line, RowNo: rowNo, Column: "时长 (s)", Field: "duration_declared_s",

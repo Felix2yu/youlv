@@ -56,6 +56,7 @@ type FileStat struct {
 	DupSkip    int        `json:"dup_skip"` // 与库内已有记录重复
 	Inserted   int        `json:"inserted"` // 执行后回填
 	Skipped    int        `json:"skipped"`
+	Promoted   int        `json:"promoted"` // 执行后回填：仅引用桩升级为正式地点的条数
 	Detected   string     `json:"detected"` // 自动识别的类型
 	Confidence float64    `json:"confidence"`
 	Missing    []string   `json:"missing,omitempty"`
@@ -100,6 +101,9 @@ type Report struct {
 		DupSkip  int `json:"dup_skip"`
 		Inserted int `json:"inserted"`
 		Skipped  int `json:"skipped"`
+		// Promoted 是「仅引用桩升级为正式地点」的条数。
+		// 它不是新增行，而是对已有行的就地升级，所以不计入 Inserted。
+		Promoted int `json:"promoted"`
 	} `json:"totals"`
 	DurationMS int64 `json:"duration_ms,omitempty"`
 }

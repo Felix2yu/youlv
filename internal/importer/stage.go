@@ -40,6 +40,12 @@ type stagedPlace struct {
 	HouseNumber *string  `json:"hn"`
 	Origin      string   `json:"org"`
 	IsStub      bool     `json:"stub"`
+	// Promote 表示这条地点要把库里同名的「仅引用」桩升级为正式地点。
+	//
+	// 升级时 source_key 保持桩的原值不变——visits 的 dedup_key 里嵌着
+	// placeKey，改 key 会让历史到访的去重键全部失配，重导同一份文件时
+	// 整批重复插入（症状是数据悄悄翻倍而不报错）。
+	Promote bool `json:"promote,omitempty"`
 }
 
 type stagedVisit struct {

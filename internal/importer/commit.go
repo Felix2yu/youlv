@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/yufei/youlv/internal/csvin"
+	"github.com/yufei/youlv/internal/geo"
 	"github.com/yufei/youlv/internal/store"
 )
 
@@ -74,7 +75,7 @@ func (s *Service) Commit(ctx context.Context, batchNo string, d Decisions) (*Rep
 	if err != nil {
 		return nil, err
 	}
-	placeIDs, ins, skip, err := s.commitPlaces(ctx, tx, places, importID, opt)
+	placeIDs, ins, skip, promoted, err := s.commitPlaces(ctx, tx, places, importID, opt)
 	if err != nil {
 		return nil, err
 	}
@@ -128,9 +129,13 @@ func (s *Service) Commit(ctx context.Context, batchNo string, d Decisions) (*Rep
 		if st, ok := stats[rep.Files[i].Kind]; ok {
 			rep.Files[i].Inserted, rep.Files[i].Skipped = st[0], st[1]
 		}
+		if rep.Files[i].Kind == csvin.KindPlaces {
+			rep.Files[i].Promoted = promoted
+		}
 		rep.Totals.Inserted += rep.Files[i].Inserted
 		rep.Totals.Skipped += rep.Files[i].Skipped
 	}
+	rep.Totals.Promoted = promoted
 	rep.Status = StatusSuccess
 	return rep, nil
 }
@@ -167,16 +172,27 @@ func (s *Service) commitActivities(ctx context.Context, tx *sql.Tx, visits []sta
 }
 
 func (s *Service) commitPlaces(ctx context.Context, tx *sql.Tx, rows []stagedPlace,
-	importID int64, opt Options) (map[string]int64, int, int, error) {
+	importID int64, opt Options) (map[string]int64, int, int, int, error) {
 	ids := make(map[string]int64)
 	if e, err := s.loadPlaceIDs(ctx, tx); err == nil {
 		for k, v := range e {
 			ids[k] = v
 		}
 	}
-	var inserted, skipped int
+	var inserted, skipped, promoted int
 	for _, p := range rows {
-		if _, exists := ids[p.SourceKey]; exists {
+		if id, exists := ids[p.SourceKey]; exists {
+			if p.Promote {
+				n, err := s.promoteStub(ctx, tx, id, p)
+				if err != nil {
+					return nil, 0, 0, 0, err
+				}
+				if n > 0 {
+					promoted++
+					continue
+				}
+				// 已经不是桩了（被别的批次升过）→ 按「已存在」处理。
+			}
 			skipped++
 			continue
 		}
@@ -190,7 +206,7 @@ func (s *Service) commitPlaces(ctx context.Context, tx *sql.Tx, rows []stagedPla
 			p.CoordFrame, p.RadiusM, p.Rating, p.Country, p.AdminArea, p.SubAdmin,
 			p.City, p.District, p.Street, p.HouseNumber, p.Origin, boolInt(p.IsStub), importID)
 		if err != nil {
-			return nil, 0, 0, fmt.Errorf("写入地点「%s」失败: %w", p.Name, err)
+			return nil, 0, 0, 0, fmt.Errorf("写入地点「%s」失败: %w", p.Name, err)
 		}
 		if n, err := res.RowsAffected(); err == nil && n == 0 {
 			skipped++
@@ -198,12 +214,75 @@ func (s *Service) commitPlaces(ctx context.Context, tx *sql.Tx, rows []stagedPla
 		}
 		id, err := res.LastInsertId()
 		if err != nil {
-			return nil, 0, 0, err
+			return nil, 0, 0, 0, err
 		}
 		ids[p.SourceKey] = id
 		inserted++
 	}
-	return ids, inserted, skipped, nil
+	return ids, inserted, skipped, promoted, nil
+}
+
+// promoteStub 把「仅引用」桩升级为正式地点，并回填引用它的到访/交通的空坐标。
+//
+// 幂等闸门是 WHERE 里的 is_stub=1：升级过的行再执行一次命中 0 行，
+// 不会重复改、也不会重复计数。
+//
+// 回滚语义（重要）：升级改的是**另一个批次**创建的行，因此「撤销升级批次」
+// 不会把坐标收回去；撤销创建批次时，该行因被后续批次的到访/交通引用而保留
+// （回滚只删本批次写入且无人引用的行），坐标也一并留下。
+// 一句话：回滚撤销的是「本批次写入的行」，不追溯撤销「本批次对更早批次的
+// 行所做的就地修改」。
+func (s *Service) promoteStub(ctx context.Context, tx *sql.Tx, id int64, p stagedPlace) (int64, error) {
+	if p.Lat == nil || p.Lon == nil {
+		return 0, nil
+	}
+	gLat, gLon := geo.WGS84ToGCJ02(*p.Lat, *p.Lon)
+	gLat, gLon = geo.Quantize(gLat, 6), geo.Quantize(gLon, 6)
+
+	res, err := tx.ExecContext(ctx, `
+		UPDATE places SET lat=?, lon=?, lat_gcj=?, lon_gcj=?, coord_frame=?,
+			radius_m=COALESCE(?, radius_m), rating=COALESCE(?, rating),
+			country=COALESCE(?, country), admin_area=COALESCE(?, admin_area),
+			sub_admin_area=COALESCE(?, sub_admin_area), city=COALESCE(?, city),
+			district=COALESCE(?, district), street=COALESCE(?, street),
+			house_number=COALESCE(?, house_number),
+			origin='imported', is_stub=0, updated_at=unixepoch()
+		WHERE id=? AND is_stub=1`,
+		p.Lat, p.Lon, p.LatGCJ, p.LonGCJ, p.CoordFrame,
+		p.RadiusM, p.Rating, p.Country, p.AdminArea, p.SubAdmin,
+		p.City, p.District, p.Street, p.HouseNumber, id)
+	if err != nil {
+		return 0, fmt.Errorf("升级桩地点「%s」失败: %w", p.Name, err)
+	}
+	n, err := res.RowsAffected()
+	if err != nil || n == 0 {
+		return 0, err
+	}
+
+	// 回填引用该地点的到访：只补坐标为空的行。
+	//
+	// 已有自身定位的到访保持不动——那是一手信息，比地点表的登记点更准。
+	// lat_raw/lon_raw 也不动：那是 CSV 原始值的审计快照，回填会伪造原始值。
+	if _, err := tx.ExecContext(ctx, `
+		UPDATE visits SET lat=?, lon=?, lat_gcj=?, lon_gcj=?, coord_frame='wgs84'
+		WHERE place_id=? AND (lat IS NULL OR lon IS NULL)`,
+		p.Lat, p.Lon, gLat, gLon, id); err != nil {
+		return 0, err
+	}
+	// 交通的起终点同理：桩没有坐标时，这两列也是空的。
+	if _, err := tx.ExecContext(ctx, `
+		UPDATE trips SET from_lat=?, from_lon=?, from_lat_gcj=?, from_lon_gcj=?
+		WHERE from_place_id=? AND (from_lat IS NULL OR from_lon IS NULL)`,
+		p.Lat, p.Lon, gLat, gLon, id); err != nil {
+		return 0, err
+	}
+	if _, err := tx.ExecContext(ctx, `
+		UPDATE trips SET to_lat=?, to_lon=?, to_lat_gcj=?, to_lon_gcj=?
+		WHERE to_place_id=? AND (to_lat IS NULL OR to_lon IS NULL)`,
+		p.Lat, p.Lon, gLat, gLon, id); err != nil {
+		return 0, err
+	}
+	return n, nil
 }
 
 func (s *Service) loadPlaceIDs(ctx context.Context, tx *sql.Tx) (map[string]int64, error) {

@@ -87,6 +87,29 @@ func (r *PlaceResolver) Add(c *candidate) {
 // Count 返回已纳入的地点条目数。
 func (r *PlaceResolver) Count() int { return len(r.byKey) }
 
+// StubByName 返回该名字对应的桩候选（没有则 nil）。
+//
+// 用于桩升级：地点记录里出现了一个此前只在到访/交通/天气里被提到过的
+// 名字，并且这次带上了真实坐标——那它就不是桩了，该升级成正式地点。
+func (r *PlaceResolver) StubByName(name string) *candidate {
+	for _, c := range r.byName[name] {
+		if c.IsStub {
+			return c
+		}
+	}
+	return nil
+}
+
+// PromoteStub 给桩候选补上真实坐标，把它变成可参与坐标消歧的候选。
+//
+// 就地修改而不是新建候选：byName 里同一个名字只能有一个条目，否则
+// 解析会误判成「同名多址」，走进最近邻分支而不是精确匹配。
+func (r *PlaceResolver) PromoteStub(c *candidate, wLat, wLon, latGCJ, lonGCJ float64) {
+	c.Lat, c.Lon = wLat, wLon
+	c.LatGCJ, c.LonGCJ = latGCJ, lonGCJ
+	c.HasCoord = true
+}
+
 // HomonymGroups 返回重名组的数量（同名但不同键）。
 // 用于导入报告的提示卡：36 组重名将按坐标消歧。
 func (r *PlaceResolver) HomonymGroups() int {
@@ -196,15 +219,24 @@ func (r *PlaceResolver) ResolveVisit(name string, lat, lon float64, allowCreate 
 
 // createFromVisit 为到访里出现、但地点库没有的地点建条目。
 // 到访坐标是 WGS-84，直接作为权威值；GCJ-02 副本按需派生。
+//
+// 坐标为 (0,0) 表示这行到访没带定位（解析失败或原表为空）：这种地点
+// 没有坐标可用，本质上和「只在别处被提到的孤儿名」一样是桩。曾经的
+// 写法把 source_key 硬编码成「有坐标」形式，于是建出来的地点 is_stub=0
+// 却没有坐标——它既不进足迹地图，也享受不到桩升级，悬在中间地带。
 func (r *PlaceResolver) createFromVisit(name string, lat, lon float64) *candidate {
+	hasCoord := lat != 0 || lon != 0
 	c := &candidate{
-		Key:      PlaceSourceKey(name, lat, lon, true),
+		Key:      PlaceSourceKey(name, lat, lon, hasCoord),
 		Name:     name,
 		Lat:      lat,
 		Lon:      lon,
-		HasCoord: lat != 0 || lon != 0,
+		HasCoord: hasCoord,
+		IsStub:   !hasCoord,
 	}
-	c.LatGCJ, c.LonGCJ = geo.WGS84ToGCJ02(lat, lon)
+	if hasCoord {
+		c.LatGCJ, c.LonGCJ = geo.WGS84ToGCJ02(lat, lon)
+	}
 	r.Add(c)
 	r.created = append(r.created, c)
 	return c
