@@ -2,7 +2,6 @@ package importer
 
 import (
 	"bufio"
-	"crypto/sha256"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -44,85 +43,85 @@ type stagedPlace struct {
 }
 
 type stagedVisit struct {
-	PlaceKey     string   `json:"pk"`
-	PlaceNameRaw string   `json:"pn"`
-	ActivityRaw  string   `json:"act"`
-	ArrivedAt    int64    `json:"arr"`
-	DepartedAt   *int64   `json:"dep"`
-	DurationS    *int64   `json:"dur"`
-	TZ           string   `json:"tz"`
-	ArrivedLocal string   `json:"al"`
-	DepartedLocal string  `json:"dl"`
-	LocalDate    string   `json:"ld"`
-	LocalMonth   string   `json:"lm"`
-	LocalYear    int      `json:"ly"`
-	LocalHour    int      `json:"lh"`
-	LocalDow     int      `json:"lw"`
-	Lat          *float64 `json:"lat"`
-	Lon          *float64 `json:"lon"`
-	LatGCJ       *float64 `json:"latg"`
-	LonGCJ       *float64 `json:"long"`
-	LatRaw       *float64 `json:"latr"`
-	LonRaw       *float64 `json:"lonr"`
-	CoordFrame   string   `json:"cf"`
-	Method       string   `json:"meth"`
-	DistM        *float64 `json:"dist"`
-	Confidence   string   `json:"conf"`
-	Note         *string  `json:"note"`
-	TagsRaw      *string  `json:"tr"`
-	Tags         []string `json:"tags"`
-	DedupKey     string   `json:"dk"`
-	RowNo        int      `json:"rn"`
-	Line         int      `json:"ln"`
-}
-
-type stagedTrip struct {
-	Mode              string   `json:"mo"`
-	ModeRaw           string   `json:"mor"`
-	FromAt            int64    `json:"fa"`
-	ToAt              int64    `json:"ta"`
-	FromLocal         string   `json:"fl"`
-	ToLocal           string   `json:"tl"`
-	LocalDate         string   `json:"ld"`
-	LocalMonth        string   `json:"lm"`
-	TZ                string   `json:"tz"`
-	DurationS         int64    `json:"dur"`
-	DurationDeclaredS *int64   `json:"dd"`
-	FromPlaceKey      string   `json:"fpk"`
-	ToPlaceKey        string   `json:"tpk"`
-	FromNameRaw       string   `json:"fn"`
-	ToNameRaw         string   `json:"tn"`
-	FromOrigin        string   `json:"fo"`
-	ToOrigin          string   `json:"to"`
-	DedupKey          string   `json:"dk"`
-	RowNo             int      `json:"rn"`
-	Line              int      `json:"ln"`
-}
-
-type stagedWeather struct {
 	PlaceKey      string   `json:"pk"`
 	PlaceNameRaw  string   `json:"pn"`
-	HourTS        int64    `json:"ht"`
-	HourLocal     string   `json:"hl"`
+	ActivityRaw   string   `json:"act"`
+	ArrivedAt     int64    `json:"arr"`
+	DepartedAt    *int64   `json:"dep"`
+	DurationS     *int64   `json:"dur"`
+	TZ            string   `json:"tz"`
+	ArrivedLocal  string   `json:"al"`
+	DepartedLocal string   `json:"dl"`
 	LocalDate     string   `json:"ld"`
 	LocalMonth    string   `json:"lm"`
-	Condition     *string  `json:"cond"`
-	TempC         *float64 `json:"temp"`
-	FeelsLikeC    *float64 `json:"feel"`
-	DewPointC     *float64 `json:"dew"`
-	Humidity      *float64 `json:"hum"`
-	PrecipType    *string  `json:"pt"`
-	PrecipMM      *float64 `json:"pmm"`
-	PrecipProb    *float64 `json:"pp"`
-	UVIndex       *int     `json:"uv"`
-	UVLevel       *string  `json:"uvl"`
-	WindDir       *string  `json:"wd"`
-	WindSpeedMS   *float64 `json:"ws"`
-	VisibilityKm  *float64 `json:"vis"`
-	RawJSON       string   `json:"raw"`
+	LocalYear     int      `json:"ly"`
+	LocalHour     int      `json:"lh"`
+	LocalDow      int      `json:"lw"`
+	Lat           *float64 `json:"lat"`
+	Lon           *float64 `json:"lon"`
+	LatGCJ        *float64 `json:"latg"`
+	LonGCJ        *float64 `json:"long"`
+	LatRaw        *float64 `json:"latr"`
+	LonRaw        *float64 `json:"lonr"`
+	CoordFrame    string   `json:"cf"`
+	Method        string   `json:"meth"`
+	DistM         *float64 `json:"dist"`
+	Confidence    string   `json:"conf"`
+	Note          *string  `json:"note"`
+	TagsRaw       *string  `json:"tr"`
+	Tags          []string `json:"tags"`
 	DedupKey      string   `json:"dk"`
 	RowNo         int      `json:"rn"`
 	Line          int      `json:"ln"`
+}
+
+type stagedTrip struct {
+	Mode              string `json:"mo"`
+	ModeRaw           string `json:"mor"`
+	FromAt            int64  `json:"fa"`
+	ToAt              int64  `json:"ta"`
+	FromLocal         string `json:"fl"`
+	ToLocal           string `json:"tl"`
+	LocalDate         string `json:"ld"`
+	LocalMonth        string `json:"lm"`
+	TZ                string `json:"tz"`
+	DurationS         int64  `json:"dur"`
+	DurationDeclaredS *int64 `json:"dd"`
+	FromPlaceKey      string `json:"fpk"`
+	ToPlaceKey        string `json:"tpk"`
+	FromNameRaw       string `json:"fn"`
+	ToNameRaw         string `json:"tn"`
+	FromOrigin        string `json:"fo"`
+	ToOrigin          string `json:"to"`
+	DedupKey          string `json:"dk"`
+	RowNo             int    `json:"rn"`
+	Line              int    `json:"ln"`
+}
+
+type stagedWeather struct {
+	PlaceKey     string   `json:"pk"`
+	PlaceNameRaw string   `json:"pn"`
+	HourTS       int64    `json:"ht"`
+	HourLocal    string   `json:"hl"`
+	LocalDate    string   `json:"ld"`
+	LocalMonth   string   `json:"lm"`
+	Condition    *string  `json:"cond"`
+	TempC        *float64 `json:"temp"`
+	FeelsLikeC   *float64 `json:"feel"`
+	DewPointC    *float64 `json:"dew"`
+	Humidity     *float64 `json:"hum"`
+	PrecipType   *string  `json:"pt"`
+	PrecipMM     *float64 `json:"pmm"`
+	PrecipProb   *float64 `json:"pp"`
+	UVIndex      *int     `json:"uv"`
+	UVLevel      *string  `json:"uvl"`
+	WindDir      *string  `json:"wd"`
+	WindSpeedMS  *float64 `json:"ws"`
+	VisibilityKm *float64 `json:"vis"`
+	RawJSON      string   `json:"raw"`
+	DedupKey     string   `json:"dk"`
+	RowNo        int      `json:"rn"`
+	Line         int      `json:"ln"`
 }
 
 // 暂存文件名与类型的对应关系。
@@ -196,11 +195,6 @@ func tripDedupKey(mode, fromName, toName string, fromAt, toAt int64) string {
 
 func weatherDedupKey(placeKey string, hourTS int64) string {
 	return hashString(fmt.Sprintf("w|%s|%d", placeKey, hourTS))
-}
-
-func sha256Hex(b []byte) string {
-	sum := sha256.Sum256(b)
-	return fmt.Sprintf("%x", sum)
 }
 
 // cleanupStaged 清理过期暂存目录。服务启动时调用一次。

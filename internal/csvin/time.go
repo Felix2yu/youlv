@@ -26,14 +26,14 @@ var timeLayouts = []string{
 
 // TimeValue 是解析结果。
 type TimeValue struct {
-	Unix    int64  // UTC unix 秒
-	Local   string // 规范化的本地时间串 2006-01-02T15:04:05+08:00
-	Naive   bool   // true 表示输入不含时区，已按 tz 解释
-	Year    int
-	Date    string // 2006-01-02
-	Month   string // 2006-01
-	Hour    int
-	Dow     int // 0 = 周日
+	Unix  int64  // UTC unix 秒
+	Local string // 规范化的本地时间串 2006-01-02T15:04:05+08:00
+	Naive bool   // true 表示输入不含时区，已按 tz 解释
+	Year  int
+	Date  string // 2006-01-02
+	Month string // 2006-01
+	Hour  int
+	Dow   int // 0 = 周日
 }
 
 // ParseTime 按候选 layout 依次尝试。全部失败才返回错误。

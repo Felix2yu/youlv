@@ -45,21 +45,21 @@ func DefaultOptions() Options {
 
 // FileStat 是单个文件的统计。
 type FileStat struct {
-	Kind     csvin.Kind `json:"kind"`
-	Label    string     `json:"label"`
-	File     string     `json:"file"`
-	SHA256   string     `json:"sha256"`
-	Rows     int        `json:"rows"`
-	Ready    int        `json:"ready"`    // 通过校验、等待写入
-	Failed   int        `json:"failed"`   // error 级，不会写入
-	Warned   int        `json:"warned"`   // 带 warn 但仍会写入
-	DupSkip  int        `json:"dup_skip"` // 与库内已有记录重复
-	Inserted int        `json:"inserted"` // 执行后回填
-	Skipped  int        `json:"skipped"`
-	Detected string     `json:"detected"` // 自动识别的类型
-	Confidence float64  `json:"confidence"`
-	Missing  []string   `json:"missing,omitempty"`
-	Extra    []string   `json:"extra,omitempty"`
+	Kind       csvin.Kind `json:"kind"`
+	Label      string     `json:"label"`
+	File       string     `json:"file"`
+	SHA256     string     `json:"sha256"`
+	Rows       int        `json:"rows"`
+	Ready      int        `json:"ready"`    // 通过校验、等待写入
+	Failed     int        `json:"failed"`   // error 级，不会写入
+	Warned     int        `json:"warned"`   // 带 warn 但仍会写入
+	DupSkip    int        `json:"dup_skip"` // 与库内已有记录重复
+	Inserted   int        `json:"inserted"` // 执行后回填
+	Skipped    int        `json:"skipped"`
+	Detected   string     `json:"detected"` // 自动识别的类型
+	Confidence float64    `json:"confidence"`
+	Missing    []string   `json:"missing,omitempty"`
+	Extra      []string   `json:"extra,omitempty"`
 }
 
 // FieldDiff 是冲突裁决里的一个字段差异。
@@ -85,14 +85,14 @@ type ConflictGroup struct {
 
 // Report 是预检或执行的结果。
 type Report struct {
-	BatchNo    string     `json:"batch_no"`
-	Status     string     `json:"status"`
-	Options    Options    `json:"options"`
-	Files      []FileStat `json:"files"`
-	Issues     []csvin.Issue `json:"issues"`
+	BatchNo    string          `json:"batch_no"`
+	Status     string          `json:"status"`
+	Options    Options         `json:"options"`
+	Files      []FileStat      `json:"files"`
+	Issues     []csvin.Issue   `json:"issues"`
 	Conflicts  []ConflictGroup `json:"conflicts"`
-	Highlights []string   `json:"highlights"`
-	Blocking   []string   `json:"blocking"`
+	Highlights []string        `json:"highlights"`
+	Blocking   []string        `json:"blocking"`
 	Totals     struct {
 		Rows     int `json:"rows"`
 		Ready    int `json:"ready"`
@@ -106,8 +106,8 @@ type Report struct {
 
 // Decisions 是用户在裁决步骤做出的选择。
 type Decisions struct {
-	GlobalStrategy  string            `json:"global_strategy"`
-	WeatherStrategy string            `json:"weather_strategy"`
+	GlobalStrategy  string `json:"global_strategy"`
+	WeatherStrategy string `json:"weather_strategy"`
 	// WeatherOverrides 逐组覆盖：conflictKey -> "old"|"new"
 	WeatherOverrides map[string]string `json:"weather_overrides"`
 }

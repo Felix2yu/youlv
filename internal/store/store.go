@@ -23,16 +23,16 @@ func New(db *sql.DB, tz *time.Location) *Store { return &Store{DB: db, TZ: tz} }
 
 // Meta 是首屏需要的全局信息。
 type Meta struct {
-	HasData      bool   `json:"has_data"`
-	Visits       int    `json:"visits"`
-	Places       int    `json:"places"`
-	Trips        int    `json:"trips"`
-	Weather      int    `json:"weather"`
-	Cities       int    `json:"cities"`
-	Activities   int    `json:"activities"`
-	FirstDate    string `json:"first_date"`
-	LastDate     string `json:"last_date"`
-	SchemaVer    int    `json:"schema_version"`
+	HasData    bool   `json:"has_data"`
+	Visits     int    `json:"visits"`
+	Places     int    `json:"places"`
+	Trips      int    `json:"trips"`
+	Weather    int    `json:"weather"`
+	Cities     int    `json:"cities"`
+	Activities int    `json:"activities"`
+	FirstDate  string `json:"first_date"`
+	LastDate   string `json:"last_date"`
+	SchemaVer  int    `json:"schema_version"`
 }
 
 func (s *Store) Meta(ctx context.Context) (*Meta, error) {
@@ -60,27 +60,27 @@ func (s *Store) Meta(ctx context.Context) (*Meta, error) {
 
 // VisitDTO 是时间轴里的一条到访。
 type VisitDTO struct {
-	ID          int64   `json:"id"`
-	PlaceID     int64   `json:"place_id"`
-	PlaceName   string  `json:"place_name"`
-	City        string  `json:"city,omitempty"`
-	Activity    string  `json:"activity"`
-	Color       string  `json:"color"`
-	ArrivedAt   int64   `json:"arrived_at"`
-	DepartedAt  *int64  `json:"departed_at,omitempty"`
-	DurationS   *int64  `json:"duration_s,omitempty"`
-	ArrivedLocal string `json:"arrived_local"`
-	DepartedLocal string `json:"departed_local,omitempty"`
-	LocalDate   string  `json:"local_date"`
-	Lat         *float64 `json:"lat,omitempty"`
-	Lon         *float64 `json:"lon,omitempty"`
-	LatGCJ      *float64 `json:"lat_gcj,omitempty"`
-	LonGCJ      *float64 `json:"lon_gcj,omitempty"`
-	Note        string  `json:"note,omitempty"`
-	Tags        []string `json:"tags,omitempty"`
-	TempC       *float64 `json:"temp_c,omitempty"`
-	Condition   string   `json:"condition,omitempty"`
-	WeatherLevel string  `json:"weather_level,omitempty"`
+	ID            int64    `json:"id"`
+	PlaceID       int64    `json:"place_id"`
+	PlaceName     string   `json:"place_name"`
+	City          string   `json:"city,omitempty"`
+	Activity      string   `json:"activity"`
+	Color         string   `json:"color"`
+	ArrivedAt     int64    `json:"arrived_at"`
+	DepartedAt    *int64   `json:"departed_at,omitempty"`
+	DurationS     *int64   `json:"duration_s,omitempty"`
+	ArrivedLocal  string   `json:"arrived_local"`
+	DepartedLocal string   `json:"departed_local,omitempty"`
+	LocalDate     string   `json:"local_date"`
+	Lat           *float64 `json:"lat,omitempty"`
+	Lon           *float64 `json:"lon,omitempty"`
+	LatGCJ        *float64 `json:"lat_gcj,omitempty"`
+	LonGCJ        *float64 `json:"lon_gcj,omitempty"`
+	Note          string   `json:"note,omitempty"`
+	Tags          []string `json:"tags,omitempty"`
+	TempC         *float64 `json:"temp_c,omitempty"`
+	Condition     string   `json:"condition,omitempty"`
+	WeatherLevel  string   `json:"weather_level,omitempty"`
 }
 
 // coordExpr 按坐标系返回取哪一列。
@@ -327,10 +327,10 @@ type PlaceFilter struct {
 // ---------- 统计 ----------
 
 type ActivityStat struct {
-	Name    string `json:"name"`
-	Color   string `json:"color"`
-	Count   int    `json:"count"`
-	DurS    int64  `json:"duration_s"`
+	Name  string `json:"name"`
+	Color string `json:"color"`
+	Count int    `json:"count"`
+	DurS  int64  `json:"duration_s"`
 }
 
 func (s *Store) StatsActivities(ctx context.Context, from, to string) ([]ActivityStat, error) {

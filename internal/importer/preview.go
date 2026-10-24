@@ -64,6 +64,8 @@ func (s *Service) Preview(ctx context.Context, files []UploadedFile, opt Options
 		f.Kind = d.Kind
 		for i := range decIssues {
 			decIssues[i].Column = uf.Name
+			// 解码阶段的问题同样要带上 kind：类型此刻已确定。
+			decIssues[i].Kind = string(f.Kind)
 		}
 		rep.Issues = append(rep.Issues, decIssues...)
 
@@ -240,6 +242,9 @@ func (s *Service) stat(kind csvin.Kind, rep *Report) *FileStat {
 }
 
 func (s *Service) addIssue(rep *Report, kind csvin.Kind, i csvin.Issue) *Report {
+	// 把 kind 写进 issue：它决定了这条问题来自哪份文件，落库时要进
+	// import_issues.kind，之前在这里被丢掉，写进去的都是空串。
+	i.Kind = string(kind)
 	rep.Issues = append(rep.Issues, i)
 	return rep
 }
@@ -273,7 +278,7 @@ func (s *Service) parsePlaces(f *csvin.File, d *csvin.DetectResult, rep *Report,
 			st.Failed++
 			rep = s.addIssue(rep, f.Kind, csvin.Issue{
 				Line: line, RowNo: rowNo, Column: "纬度/经度", Field: "lat/lon",
-				Value: ci.Get(rec, "纬度") + "," + ci.Get(rec, "经度"),
+				Value:    ci.Get(rec, "纬度") + "," + ci.Get(rec, "经度"),
 				Severity: csvin.SevError, Code: "ERR_COORD_PARSE",
 				Message: "纬度或经度无法解析", Hint: "应为十进制度，例如 31.299758",
 			})
@@ -283,7 +288,7 @@ func (s *Service) parsePlaces(f *csvin.File, d *csvin.DetectResult, rep *Report,
 			st.Failed++
 			rep = s.addIssue(rep, f.Kind, csvin.Issue{
 				Line: line, RowNo: rowNo, Column: "纬度/经度", Field: "lat/lon",
-				Value: fmt.Sprintf("%.6f,%.6f", lat, lon),
+				Value:    fmt.Sprintf("%.6f,%.6f", lat, lon),
 				Severity: csvin.SevError, Code: "ERR_COORD_RANGE",
 				Message: "坐标超出合法范围", Hint: "纬度应在 -90~90，经度在 -180~180",
 			})
@@ -524,10 +529,10 @@ func (s *Service) parseVisits(f *csvin.File, d *csvin.DetectResult, rep *Report,
 			LatRaw: ptr(lat), LonRaw: ptr(lon),
 			CoordFrame: res.Frame, Method: res.Method, DistM: ptr(res.DistM),
 			Confidence: res.Confidence,
-			Note: optStr(ci.Get(rec, "备注")),
-			TagsRaw: optStr(ci.Get(rec, "标签")),
-			Tags: csvin.SplitTags(ci.Get(rec, "标签")),
-			DedupKey: dk, RowNo: rowNo, Line: line,
+			Note:       optStr(ci.Get(rec, "备注")),
+			TagsRaw:    optStr(ci.Get(rec, "标签")),
+			Tags:       csvin.SplitTags(ci.Get(rec, "标签")),
+			DedupKey:   dk, RowNo: rowNo, Line: line,
 		}
 		if lat == 0 && lon == 0 {
 			v.Lat, v.Lon, v.LatGCJ, v.LonGCJ = nil, nil, nil, nil
@@ -597,7 +602,7 @@ func (s *Service) parseTrips(f *csvin.File, d *csvin.DetectResult, rep *Report,
 				st.Warned++
 				rep = s.addIssue(rep, f.Kind, csvin.Issue{
 					Line: line, RowNo: rowNo, Column: "时长 (s)", Field: "duration_declared_s",
-					Value: fmt.Sprintf("声明 %ds，实际 %ds", v, dur),
+					Value:    fmt.Sprintf("声明 %ds，实际 %ds", v, dur),
 					Severity: csvin.SevWarn, Code: "WARN_DURATION_MISMATCH",
 					Message: "声明时长与起止时间差不一致，以起止时间为准", Hint: "导出工具的舍入差异，通常无害",
 				})
@@ -696,11 +701,11 @@ func (s *Service) parseWeather(f *csvin.File, d *csvin.DetectResult, rep *Report
 			PlaceKey: res.PlaceKey, PlaceNameRaw: name,
 			HourTS: hourTS, HourLocal: time.Unix(hourTS, 0).In(s.tz).Format("2006-01-02T15:04:05-07:00"),
 			LocalDate: tv.Date, LocalMonth: tv.Month,
-			Condition: optStr(ci.Get(rec, "天气状况")),
+			Condition:  optStr(ci.Get(rec, "天气状况")),
 			PrecipType: optStr(ci.Get(rec, "降水类型")),
-			UVLevel: optStr(ci.Get(rec, "紫外线等级")),
-			WindDir: optStr(ci.Get(rec, "风向")),
-			RowNo: rowNo, Line: line,
+			UVLevel:    optStr(ci.Get(rec, "紫外线等级")),
+			WindDir:    optStr(ci.Get(rec, "风向")),
+			RowNo:      rowNo, Line: line,
 		}
 		// 温度等是 float32 导出噪声，统一抹平后再比对，否则冲突裁决会
 		// 出现「22.34 vs 22.34000015258789」这种无意义差异。
@@ -924,7 +929,7 @@ func (s *Service) savePreview(ctx context.Context, batchNo string, rep *Report,
 		if _, err := tx.ExecContext(ctx,
 			`INSERT INTO import_issues(import_id, kind, line, row_no, col, field, value,
 				severity, code, message, hint) VALUES(?,?,?,?,?,?,?,?,?,?,?)`,
-			importID, "", iss.Line, iss.RowNo, iss.Column, iss.Field,
+			importID, iss.Kind, iss.Line, iss.RowNo, iss.Column, iss.Field,
 			truncate(iss.Value, 500), iss.Severity, iss.Code, iss.Message, iss.Hint); err != nil {
 			return err
 		}

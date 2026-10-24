@@ -11,8 +11,8 @@ import (
 
 // RollbackResult 是回滚的产出。
 type RollbackResult struct {
-	BatchNo   string `json:"batch_no"`
-	Deleted   struct {
+	BatchNo string `json:"batch_no"`
+	Deleted struct {
 		Visits  int `json:"visits"`
 		Trips   int `json:"trips"`
 		Weather int `json:"weather"`

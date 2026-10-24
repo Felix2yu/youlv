@@ -127,14 +127,6 @@ func tripKeys(rows []stagedTrip) []string {
 	return out
 }
 
-func weatherKeys(rows []stagedWeather) []string {
-	out := make([]string, 0, len(rows))
-	for _, r := range rows {
-		out = append(out, r.DedupKey)
-	}
-	return out
-}
-
 func derefStr(p *string) any {
 	if p == nil {
 		return nil

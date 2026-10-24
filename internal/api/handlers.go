@@ -175,8 +175,8 @@ func (s *Server) statsHourly(w http.ResponseWriter, r *http.Request) error {
 
 func (s *Server) mapPoints(w http.ResponseWriter, r *http.Request) error {
 	bbox := store.BBox{
-		West:  queryFloat(r, "west", -180), South: queryFloat(r, "south", -90),
-		East:  queryFloat(r, "east", 180), North: queryFloat(r, "north", 90),
+		West: queryFloat(r, "west", -180), South: queryFloat(r, "south", -90),
+		East: queryFloat(r, "east", 180), North: queryFloat(r, "north", 90),
 	}
 	list, err := s.st.MapPoints(r.Context(), bbox)
 	if err != nil {
@@ -370,17 +370,30 @@ func (s *Server) importIssues(w http.ResponseWriter, r *http.Request) error {
 	}
 	q := `SELECT kind, line, row_no, col, field, value, severity, code, message, hint
 	      FROM import_issues WHERE import_id=?`
-	var args []any = []any{importID}
-	if sev := query(r, "severity", ""); sev != "" {
-		q += " AND severity=?"
-		args = append(args, sev)
-	}
-	if code := query(r, "code", ""); code != "" {
-		q += " AND code=?"
-		args = append(args, code)
+	// 总数与列表用同一组过滤条件：前端要显示「共 N 条」并据此翻页，
+	// 两个查询的过滤条件不一致会让页码算错。
+	countQ := `SELECT COUNT(*) FROM import_issues WHERE import_id=?`
+	args := []any{importID}
+	countArgs := []any{importID}
+	for _, f := range []struct{ param, column string }{
+		{"severity", "severity"},
+		{"code", "code"},
+		{"kind", "kind"},
+	} {
+		if v := query(r, f.param, ""); v != "" {
+			q += " AND " + f.column + "=?"
+			args = append(args, v)
+			countQ += " AND " + f.column + "=?"
+			countArgs = append(countArgs, v)
+		}
 	}
 	q += " ORDER BY line LIMIT ? OFFSET ?"
 	args = append(args, queryInt(r, "limit", 200), queryInt(r, "offset", 0))
+
+	var total int
+	if err := s.st.DB.QueryRowContext(r.Context(), countQ, countArgs...).Scan(&total); err != nil {
+		return err
+	}
 
 	rows, err := s.st.DB.QueryContext(r.Context(), q, args...)
 	if err != nil {
@@ -408,7 +421,7 @@ func (s *Server) importIssues(w http.ResponseWriter, r *http.Request) error {
 		}
 		out = append(out, i)
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"items": out})
+	writeJSON(w, http.StatusOK, map[string]any{"items": out, "total": total})
 	return nil
 }
 

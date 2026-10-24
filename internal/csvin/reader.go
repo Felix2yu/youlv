@@ -59,6 +59,12 @@ type File struct {
 // 每个字段都要带 json tag：这个结构直接作为 /api/imports/{id}/issues 的
 // 响应体返回给前端，缺 tag 会输出 Go 风格的大写字段名。
 type Issue struct {
+	// Kind 是问题所属的文件类型（places|visits|trips|weather）。
+	//
+	// 它不在 csvin 包内产生——解码阶段还不知道文件是哪种类型，
+	// 是 importer 在识别出类型后回填的。落库时写进 import_issues.kind，
+	// 让问题清单能按文件维度过滤（否则这个维度在落库时就丢了）。
+	Kind     string `json:"kind,omitempty"`
 	Line     int    `json:"line"`
 	RowNo    int    `json:"row_no"`
 	Column   string `json:"column"`

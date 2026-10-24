@@ -17,10 +17,10 @@ import (
 
 // Server 持有依赖并对外暴露 http.Handler。
 type Server struct {
-	st     *store.Store
-	imp    *importer.Service
-	mux    *http.ServeMux
-	root   http.Handler
+	st      *store.Store
+	imp     *importer.Service
+	mux     *http.ServeMux
+	root    http.Handler
 	version string
 }
 
@@ -108,8 +108,6 @@ func writeJSON(w http.ResponseWriter, code int, v any) {
 func writeErr(w http.ResponseWriter, code int, msg string) {
 	writeJSON(w, code, map[string]string{"error": msg})
 }
-
-func writeOK(w http.ResponseWriter) { w.WriteHeader(http.StatusNoContent) }
 
 // ---------- 入参 ----------
 

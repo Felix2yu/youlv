@@ -14,24 +14,24 @@ import (
 // LatGCJ/LonGCJ 是 CSV 原值（地点记录为 GCJ-02）；Lat/Lon 是换算出的
 // WGS-84。两份都要留着，因为到访记录用的是 WGS-84，而国内底图要 GCJ-02。
 type candidate struct {
-	Key     string
-	Name    string
-	Lat     float64 // WGS-84
-	Lon     float64
-	LatGCJ  float64
-	LonGCJ  float64
+	Key      string
+	Name     string
+	Lat      float64 // WGS-84
+	Lon      float64
+	LatGCJ   float64
+	LonGCJ   float64
 	HasCoord bool
-	IsStub  bool
-	Hits    int64 // visit_count，同名消歧时的次要判据
+	IsStub   bool
+	Hits     int64 // visit_count，同名消歧时的次要判据
 }
 
 // ResolveResult 是到访记录解析到地点的结论。
 type ResolveResult struct {
-	PlaceKey   string  // 稳定键（source_key），提交阶段才换成 rowid
-	Method     string  // exact|nearest|created|unresolved
+	PlaceKey   string // 稳定键（source_key），提交阶段才换成 rowid
+	Method     string // exact|nearest|created|unresolved
 	DistM      float64
-	Confidence string  // high|medium|low|none
-	Frame      string  // wgs84|gcj02_mislabeled|unknown|inherited
+	Confidence string // high|medium|low|none
+	Frame      string // wgs84|gcj02_mislabeled|unknown|inherited
 	Created    bool
 }
 
@@ -40,11 +40,11 @@ type ResolveResult struct {
 // 它同时服务于两个阶段：预检时它手上是「库里已有的地点 + 本批次即将导入的
 // 地点」，提交时它给出稳定键，由 commit 换成 rowid。
 type PlaceResolver struct {
-	byName   map[string][]*candidate
-	byKey    map[string]*candidate
-	created  []*candidate // 本批次动态创建的条目（到访衍生点、孤儿桩）
-	snapM    float64      // 坐标系判定阈值，实测取 5 m
-	nearM    float64      // 最近邻上限，超过即低置信
+	byName  map[string][]*candidate
+	byKey   map[string]*candidate
+	created []*candidate // 本批次动态创建的条目（到访衍生点、孤儿桩）
+	snapM   float64      // 坐标系判定阈值，实测取 5 m
+	nearM   float64      // 最近邻上限，超过即低置信
 }
 
 // Created 返回解析过程中动态创建的地点条目。
@@ -128,8 +128,8 @@ func (r *PlaceResolver) ResolveVisit(name string, lat, lon float64, allowCreate 
 	}
 
 	best := struct {
-		c       *candidate
-		d       float64
+		c        *candidate
+		d        float64
 		frameGCJ bool
 	}{d: 1e18}
 
