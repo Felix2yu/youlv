@@ -162,12 +162,14 @@ function Detail({
         <Row k="离开" v={d.departed_at ? hhmm(d.departed_at) : '未记录'} />
         <Row k="停留" v={dur(d.duration_s)} />
         <Row k="星期" v={['周日', '周一', '周二', '周三', '周四', '周五', '周六'][d.local_dow]} />
-        {weather ? (
+        {/* 没有温度也没有天气现象时整行不显示：手录的到访本来就没有天气，
+            留一行「— 近似」既不准确也占地方。 */}
+        {weather && (weather.temp_c != null || weather.condition) ? (
           <Row
             k="天气"
             v={
               <>
-                {weather.temp_c != null ? temp(weather.temp_c) : '—'}
+                {weather.temp_c != null ? temp(weather.temp_c) : ''}
                 {weather.condition ? ` ${weather.condition}` : ''}
                 {weather.level && weather.level !== 'exact' ? (
                   <span className="ml-1 text-[11px] text-warn">近似</span>
@@ -206,9 +208,9 @@ function Detail({
 
       <div>
         <div className="mb-1 text-[11px] text-faint">解析依据</div>
-        <Row k="绑定方式" v={d.resolve_method || '—'} />
+        <Row k="绑定方式" v={methodCN(d.resolve_method)} />
         <Row k="距离" v={d.resolve_dist_m != null ? `${d.resolve_dist_m.toFixed(2)} m` : '—'} />
-        <Row k="置信度" v={d.resolve_confidence || '—'} />
+        <Row k="置信度" v={confidenceCN(d.resolve_confidence)} />
         <Row k="坐标系" v={d.coord_frame || '—'} />
       </div>
 
@@ -239,6 +241,29 @@ function Detail({
       </div>
     </div>
   );
+}
+
+/** 绑定方式的中文说法。库里存的是英文枚举，界面上不能裸着露出「temporal」。 */
+const METHOD_CN: Record<string, string> = {
+  manual: '手动录入',
+  exact: '同名唯一命中',
+  nearest: '同名最近匹配',
+  temporal: '按同一时刻人在哪匹配',
+  created: '新建地点',
+  unresolved: '没对上地点',
+  empty: '无坐标',
+  name: '按名称匹配'
+};
+
+function methodCN(v?: string | null): string {
+  if (!v) return '—';
+  return METHOD_CN[v] ?? v;
+}
+
+/** 置信度同理：high/low 直接显示会像是内部字段漏出来了。 */
+function confidenceCN(v?: string | null): string {
+  if (!v) return '—';
+  return { high: '高', medium: '中', low: '低', none: '无', exact: '精确' }[v] ?? v;
 }
 
 /** 单条编辑。只开放「改起来不会破坏统计口径」的几个字段。 */
