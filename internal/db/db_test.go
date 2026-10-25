@@ -116,3 +116,58 @@ func TestOpenReadOnlyMissingFile(t *testing.T) {
 		t.Fatal("只读打开不存在的库应当报错，而不是静默创建")
 	}
 }
+
+// 备份契约（Felix2yu/.github/docs/backup.md）落在 `youlv backup` 上：
+// 只读打开源库，VACUUM INTO 出快照写到 stdout。这条测试锁住两个性质：
+// 只读连接**确实不能写**源库，但**必须能** VACUUM INTO。
+//
+// 这里曾经用 PRAGMA query_only(ON) 实现只读，结果 VACUUM INTO 被一并禁掉，
+// 报 "attempt to write a readonly database"，备份功能整体不可用。
+func TestOpenReadOnlyCanVacuumInto(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "src.db")
+
+	w, err := db.Open(path)
+	if err != nil {
+		t.Fatalf("建库: %v", err)
+	}
+	if _, err := w.Exec(`CREATE TABLE t(x INTEGER)`); err != nil {
+		t.Fatalf("建表: %v", err)
+	}
+	if _, err := w.Exec(`INSERT INTO t VALUES (1),(2),(3)`); err != nil {
+		t.Fatalf("插入: %v", err)
+	}
+	if err := w.Close(); err != nil {
+		t.Fatalf("关闭: %v", err)
+	}
+
+	ro, err := db.OpenReadOnly(path)
+	if err != nil {
+		t.Fatalf("只读打开: %v", err)
+	}
+	defer ro.Close()
+
+	snap := filepath.Join(dir, "snapshot.db")
+	if _, err := ro.Exec(`VACUUM INTO ?`, snap); err != nil {
+		t.Fatalf("只读连接上 VACUUM INTO 失败（备份会整体不可用）: %v", err)
+	}
+
+	// 快照必须真的可用、内容完整。
+	need, err := db.Open(snap)
+	if err != nil {
+		t.Fatalf("打开快照: %v", err)
+	}
+	defer need.Close()
+	var n int
+	if err := need.QueryRow(`SELECT COUNT(*) FROM t`).Scan(&n); err != nil {
+		t.Fatalf("查快照: %v", err)
+	}
+	if n != 3 {
+		t.Fatalf("快照行数 = %d，应为 3", n)
+	}
+
+	// 只读连接不能写源库，否则「备份不污染源库」这条不成立。
+	if _, err := ro.Exec(`INSERT INTO t VALUES (4)`); err == nil {
+		t.Fatal("只读连接竟然允许写入源库")
+	}
+}
