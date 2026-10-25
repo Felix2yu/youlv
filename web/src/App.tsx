@@ -27,8 +27,16 @@ function BrandMark({ className }: { className?: string }) {
     <svg viewBox="0 0 24 24" className={className} aria-hidden="true">
       <mask id={maskId}>
         <g transform="translate(-4.38,-3.36) scale(0.06)">
-          <path d="M108,152 L218,120 L328,152 L438,120 L438,360 L328,392 L218,360 L108,392 Z" fill="#fff" />
-          <path d="M218,120 L218,360 M328,152 L328,392" stroke="#000" strokeWidth="16" fill="none" />
+          <path
+            d="M108,152 L218,120 L328,152 L438,120 L438,360 L328,392 L218,360 L108,392 Z"
+            fill="#fff"
+          />
+          <path
+            d="M218,120 L218,360 M328,152 L328,392"
+            stroke="#000"
+            strokeWidth="16"
+            fill="none"
+          />
           <path
             d="M158,346 C190,300 178,268 240,250 C296,234 330,232 372,210"
             fill="none"
@@ -37,7 +45,10 @@ function BrandMark({ className }: { className?: string }) {
             strokeLinecap="round"
             strokeDasharray="0.1 26"
           />
-          <path d="M372,150 c-17,0 -30,13 -30,30 c0,22 30,48 30,48 c0,0 30,-26 30,-48 c0,-17 -13,-30 -30,-30 Z" fill="#000" />
+          <path
+            d="M372,150 c-17,0 -30,13 -30,30 c0,22 30,48 30,48 c0,0 30,-26 30,-48 c0,-17 -13,-30 -30,-30 Z"
+            fill="#000"
+          />
           <circle cx="372" cy="179" r="12" fill="#fff" />
         </g>
       </mask>
