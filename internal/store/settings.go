@@ -19,11 +19,15 @@ const (
 	keyWeatherApprox       = "weather.approx"
 )
 
-// 默认瓦片源：CARTO 的浅色底图。
+// 默认瓦片源：高德路网底图（GCJ-02）。
 //
-// 注意这里的 {s} 子域占位符要求 subdomains 一起生效；Leaflet 侧会把它
-// 展开成 a/b/c/d 四个子域。
-const defaultTilesURL = "https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png"
+// 选它的理由是可验证的而不是偏好：CARTO / OSM 的瓦片在国内多地直接超时
+// （curl 10s 拿到 000），天地图要自备 key（无 key 返回 418），而高德这条路网
+// 瓦片是唯一「装上就能出图」的合规图源。它返回的是 GCJ-02 坐标系的瓦片，
+// 所以默认 map.frame 也必须是 gcj02——用 WGS-84 的点位会整体偏三四百米。
+//
+// 想换成自建瓦片或天地图，在设置页改 URL 即可；URL 为空表示不提供底图。
+const defaultTilesURL = "https://webrd0{s}.is.autonavi.com/appmaptile?lang=zh_cn&size=1&scale=1&style=8&x={x}&y={y}&z={z}"
 
 // Settings 是应用设置。
 type Settings struct {
@@ -75,10 +79,11 @@ func (s *Store) Settings(ctx context.Context) (Settings, error) {
 	}
 	var out Settings
 	out.Map.TilesURL = kvStr(kv, keyMapTilesURL, defaultTilesURL)
-	out.Map.TilesAttribution = kvStr(kv, keyMapTilesAttribution, "© OpenStreetMap · © CARTO")
-	out.Map.TilesMaxZoom = kvInt(kv, keyMapTilesMaxZoom, 19)
-	out.Map.TilesSubdomains = kvStr(kv, keyMapTilesSubdomains, "a,b,c,d")
-	out.Map.Frame = kvStr(kv, keyMapFrame, "wgs84")
+	out.Map.TilesAttribution = kvStr(kv, keyMapTilesAttribution, "© 高德地图")
+	out.Map.TilesMaxZoom = kvInt(kv, keyMapTilesMaxZoom, 18)
+	out.Map.TilesSubdomains = kvStr(kv, keyMapTilesSubdomains, "1,2,3,4")
+	// 默认 GCJ-02：默认底图是高德的瓦片，两者必须同坐标系。
+	out.Map.Frame = kvStr(kv, keyMapFrame, "gcj02")
 	out.Timeline.Frame = kvStr(kv, keyTimelineFrame, "wgs84")
 	out.Weather.Approx = kvBool(kv, keyWeatherApprox, true)
 	return out, nil

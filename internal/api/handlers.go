@@ -219,7 +219,9 @@ func (s *Server) mapPoints(w http.ResponseWriter, r *http.Request) error {
 		return nil
 	}
 	bbox := store.BBox{West: west, South: south, East: east, North: north}
-	list, err := s.st.MapPoints(r.Context(), bbox)
+	// frame 决定用哪一列切边界：底图是 GCJ-02 时视口也是 GCJ-02，
+	// 用 WGS 列去比会把边缘的点裁掉。
+	list, err := s.st.MapPoints(r.Context(), bbox, queryFrame(r))
 	if err != nil {
 		return err
 	}

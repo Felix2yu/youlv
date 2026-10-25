@@ -205,9 +205,11 @@ export const api = {
   statsCommute: () => json<{ items: ModeStat[] }>('/api/stats/commute').then((r) => r.items),
   statsHourly: () => json<{ items: HourStat[] }>('/api/stats/hourly').then((r) => r.items),
 
-  mapPoints: (b: BBox) =>
+  // frame 要与底图一致：GCJ-02 底图上的视口边界也是 GCJ-02 的，
+  // 传 wgs84 会让视野边缘的点位被裁掉。
+  mapPoints: (b: BBox, frame = 'wgs84') =>
     json<{ items: MapPoint[] }>(
-      `/api/map/points${qs({ west: b.west, south: b.south, east: b.east, north: b.north })}`
+      `/api/map/points${qs({ west: b.west, south: b.south, east: b.east, north: b.north, frame })}`
     ).then((r) => r.items),
   mapBounds: () => json<BBox>('/api/map/bounds'),
 

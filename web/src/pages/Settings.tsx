@@ -19,6 +19,32 @@ const STATUS_TEXT: Record<string, string> = {
   rolled_back: '已撤销'
 };
 
+/**
+ * 底图预设。
+ *
+ * 只放实测能直连的源：CARTO / OSM 在国内多地是直接超时（连不上也不报错，
+ * 地图就是一片白），所以不作为可选项。两个预设都是高德的瓦片，坐标系
+ * 必须一起切到 GCJ-02，否则点位会整体偏移。
+ */
+const TILE_PRESETS = [
+  {
+    label: '高德路网',
+    url: 'https://webrd0{s}.is.autonavi.com/appmaptile?lang=zh_cn&size=1&scale=1&style=8&x={x}&y={y}&z={z}',
+    subdomains: '1,2,3,4',
+    maxZoom: 18,
+    attribution: '© 高德地图',
+    frame: 'gcj02'
+  },
+  {
+    label: '高德卫星',
+    url: 'https://webst0{s}.is.autonavi.com/appmaptile?lang=zh_cn&size=1&scale=1&style=6&x={x}&y={y}&z={z}',
+    subdomains: '1,2,3,4',
+    maxZoom: 18,
+    attribution: '© 高德地图',
+    frame: 'gcj02'
+  }
+] as const;
+
 export default function Settings({
   meta,
   onDataChanged
@@ -282,8 +308,43 @@ function MapSettings() {
         <div className="flex flex-col gap-3">
           <div>
             <label className="mb-1 block text-[12px] text-muted">底图瓦片地址</label>
+            {/* 预设比让人手填 URL 现实得多：瓦片地址是长串带占位符的，
+                填错一个字符就是一片空白，而界面看不出错在哪。 */}
+            <div className="mb-1.5 flex flex-wrap gap-1.5">
+              {TILE_PRESETS.map((p) => (
+                <button
+                  key={p.label}
+                  onClick={() =>
+                    void patch({
+                      map: {
+                        ...set.data!.map,
+                        tiles_url: p.url,
+                        tiles_subdomains: p.subdomains,
+                        tiles_max_zoom: p.maxZoom,
+                        tiles_attribution: p.attribution,
+                        frame: p.frame
+                      }
+                    })
+                  }
+                  className={`rounded-md border px-2 py-0.5 text-[12px] ${
+                    set.data?.map.tiles_url === p.url
+                      ? 'border-accent bg-accent-soft text-accent'
+                      : 'border-line-strong bg-surface text-muted hover:text-ink'
+                  }`}
+                >
+                  {p.label}
+                </button>
+              ))}
+              <button
+                onClick={() => void patch({ map: { ...set.data!.map, tiles_url: '' } })}
+                className="rounded-md border border-line-strong bg-surface px-2 py-0.5 text-[12px] text-muted hover:text-ink"
+              >
+                关闭底图
+              </button>
+            </div>
             <input
               defaultValue={set.data.map.tiles_url}
+              key={set.data.map.tiles_url}
               onBlur={(e) => {
                 if (e.target.value !== set.data?.map.tiles_url) {
                   void patch({ map: { ...set.data!.map, tiles_url: e.target.value } });
@@ -292,8 +353,10 @@ function MapSettings() {
               placeholder="留空则只保留自绘层"
               className="h-8 w-full rounded-md border border-line-strong bg-surface px-2 text-[12px] placeholder:text-faint"
             />
-            <p className="mt-1 text-[11px] text-faint">
+            <p className="mt-1 text-[11px] leading-relaxed text-faint">
               支持 {'{s}'} {'{z}'} {'{x}'} {'{y}'} 占位符。留空即不提供底图，只用自绘层。
+              国内网络访问不了境外的瓦片服务，预设里这两个是实测能直连的；
+              想用自己的瓦片（天地图、自建服务）直接改上面的地址即可。
             </p>
           </div>
 

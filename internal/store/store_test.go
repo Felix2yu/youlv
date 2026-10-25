@@ -132,7 +132,7 @@ func TestMapPointsFiltersByBBox(t *testing.T) {
 	addVisit(t, s, sh, "上海的点", base, "2026-10-23", 31.2, 121.4)
 	addVisit(t, s, bj, "北京的点", base, "2026-10-23", 39.9, 116.4)
 
-	pts, err := s.MapPoints(ctx, BBox{West: 120, South: 30, East: 122, North: 32})
+	pts, err := s.MapPoints(ctx, BBox{West: 120, South: 30, East: 122, North: 32}, "wgs84")
 	if err != nil {
 		t.Fatalf("MapPoints: %v", err)
 	}
@@ -141,5 +141,12 @@ func TestMapPointsFiltersByBBox(t *testing.T) {
 	}
 	if pts[0].Name != "上海的点" {
 		t.Errorf("取到 %s", pts[0].Name)
+	}
+	// GCJ-02 视野下也要能取到：这里的测试数据 WGS 与 GCJ 相同，
+	// 只验证走 GCJ 分支不会因为列名或参数写错而漏点。
+	if pts, err := s.MapPoints(ctx, BBox{West: 120, South: 30, East: 122, North: 32}, "gcj02"); err != nil {
+		t.Fatalf("MapPoints(gcj02): %v", err)
+	} else if len(pts) != 1 {
+		t.Errorf("GCJ-02 视野下取到 %d 个点，应为 1", len(pts))
 	}
 }

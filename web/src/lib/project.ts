@@ -54,7 +54,9 @@ export function fitBounds(
   return {
     cx: (a.x + b.x) / 2,
     cy: (a.y + b.y) / 2,
-    k: Math.max(0.9, Math.min(kx, ky))
+    // 上限与滚轮/按钮的缩放上限保持一致：只有一个地点时范围退化成一个点，
+    // 不封顶会算出 k≈1e6（画面直接糊成一片，用户以为坏了）。
+    k: Math.max(0.9, Math.min(4000, Math.min(kx, ky)))
   };
 }
 

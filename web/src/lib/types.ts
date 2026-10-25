@@ -159,6 +159,9 @@ export interface BBox {
   south: number;
   east: number;
   north: number;
+  /** 参与计算范围的到访数。只有 0 才代表「没有带坐标的数据」——
+   *  只有一个点时 west===east，不能拿它当空库判据。 */
+  count?: number;
 }
 
 export interface Overview {

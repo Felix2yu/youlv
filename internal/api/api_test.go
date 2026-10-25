@@ -122,8 +122,11 @@ func TestMapTilesReturnsConfig(t *testing.T) {
 	if m["url_template"] == "" {
 		t.Error("url_template 不应为空（默认给一个可用瓦片源）")
 	}
-	if m["frame"] != "wgs84" {
-		t.Errorf("默认 frame = %v，应为 wgs84", m["frame"])
+	if m["frame"] != "gcj02" {
+		t.Errorf("默认 frame = %v，应为 gcj02（默认底图是高德的瓦片，必须同坐标系）", m["frame"])
+	}
+	if !strings.Contains(m["url_template"].(string), "autonavi") {
+		t.Errorf("默认瓦片源 = %v，应为实测可直连的国内图源", m["url_template"])
 	}
 }
 
@@ -134,28 +137,28 @@ func TestSettingsRoundTrip(t *testing.T) {
 	if w.Code != http.StatusOK {
 		t.Fatalf("GET 状态码 = %d，应为 200", w.Code)
 	}
-	if decode(t, w)["map"].(map[string]any)["frame"] != "wgs84" {
-		t.Error("默认坐标系应为 wgs84")
+	if decode(t, w)["map"].(map[string]any)["frame"] != "gcj02" {
+		t.Error("默认坐标系应为 gcj02")
 	}
 
 	// 部分更新：只传 map.frame。
-	w = do(t, s, "PUT", "/api/settings", `{"map":{"frame":"gcj02"}}`)
+	w = do(t, s, "PUT", "/api/settings", `{"map":{"frame":"wgs84"}}`)
 	if w.Code != http.StatusOK {
 		t.Fatalf("PUT 状态码 = %d，应为 200：%s", w.Code, w.Body.String())
 	}
 	m := decode(t, w)
-	if m["map"].(map[string]any)["frame"] != "gcj02" {
-		t.Errorf("更新后 frame = %v，应为 gcj02", m["map"].(map[string]any)["frame"])
+	if m["map"].(map[string]any)["frame"] != "wgs84" {
+		t.Errorf("更新后 frame = %v，应为 wgs84", m["map"].(map[string]any)["frame"])
 	}
 	// 没传的字段应保持原值（部分更新，不是整体替换）。
-	if m["map"].(map[string]any)["tiles_max_zoom"].(float64) != 19 {
-		t.Errorf("未传的 tiles_max_zoom 被改成了 %v，应保持 19",
+	if m["map"].(map[string]any)["tiles_max_zoom"].(float64) != 18 {
+		t.Errorf("未传的 tiles_max_zoom 被改成了 %v，应保持 18",
 			m["map"].(map[string]any)["tiles_max_zoom"])
 	}
 
 	// 再读一次，确认落库了。
 	w = do(t, s, "GET", "/api/settings", "")
-	if decode(t, w)["map"].(map[string]any)["frame"] != "gcj02" {
+	if decode(t, w)["map"].(map[string]any)["frame"] != "wgs84" {
 		t.Error("更新没有落库")
 	}
 }

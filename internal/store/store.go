@@ -482,15 +482,25 @@ type MapPoint struct {
 }
 
 // MapPoints 返回 bbox 内按地点聚合的点位。
-func (s *Store) MapPoints(ctx context.Context, bbox BBox) ([]MapPoint, error) {
+//
+// bbox 的坐标系必须与 frame 一致：底图是 GCJ-02 时，视口边界也是 GCJ-02 的，
+// 拿它去比 WGS-84 的列会让视野边缘约五百米内的点位被裁掉（放大后更明显）。
+func (s *Store) MapPoints(ctx context.Context, bbox BBox, frame string) ([]MapPoint, error) {
+	latCol, lonCol := "COALESCE(v.lat, p.lat)", "COALESCE(v.lon, p.lon)"
+	if frame == "gcj02" {
+		// 没有 GCJ 副本时退回 WGS：偏几百米总比整条记录从地图上消失好。
+		latCol = "COALESCE(v.lat_gcj, p.lat_gcj, v.lat, p.lat)"
+		lonCol = "COALESCE(v.lon_gcj, p.lon_gcj, v.lon, p.lon)"
+	}
 	rows, err := s.DB.QueryContext(ctx, `
 		SELECT COALESCE(v.lat, p.lat), COALESCE(v.lon, p.lon),
-		       COALESCE(v.lat_gcj, p.lat_gcj), COALESCE(v.lon_gcj, p.lon_gcj),
+		       COALESCE(v.lat_gcj, p.lat_gcj, v.lat, p.lat),
+		       COALESCE(v.lon_gcj, p.lon_gcj, v.lon, p.lon),
 		       COUNT(*), COALESCE(SUM(v.duration_s),0),
 		       COALESCE(p.display_name, v.place_name_raw), COALESCE(v.place_id,0)
 		FROM visits v LEFT JOIN places p ON p.id = v.place_id
-		WHERE COALESCE(v.lat, p.lat) BETWEEN ? AND ?
-		  AND COALESCE(v.lon, p.lon) BETWEEN ? AND ?
+		WHERE `+latCol+` BETWEEN ? AND ?
+		  AND `+lonCol+` BETWEEN ? AND ?
 		GROUP BY COALESCE(v.place_id,0)
 		ORDER BY 5 DESC`, bbox.South, bbox.North, bbox.West, bbox.East)
 	if err != nil {
@@ -520,15 +530,25 @@ type BBox struct {
 	South float64 `json:"south"`
 	East  float64 `json:"east"`
 	North float64 `json:"north"`
+	// Count 是参与计算范围的到访数。为 0 才代表「真的没有带坐标的数据」：
+	// 只有一个点时 West==East，不能拿它当空库的判据。
+	Count int `json:"count"`
 }
 
 // Bounds 返回全量数据的经纬度范围，供地图初始化视野。
+// Bounds 返回全量数据的经纬度范围，供地图初始化视野。
+//
+// 带 Count 是必须的：只有一个地点时 MIN 与 MAX 天然相等，
+// 前端拿 east==west 当「没有数据」就会把有数据的库误判成空库
+// （新装应用手动记了第一条，地图直接显示「还没有带坐标的到访」）。
 func (s *Store) Bounds(ctx context.Context) (*BBox, error) {
 	var b BBox
 	err := s.DB.QueryRowContext(ctx, `
 		SELECT COALESCE(MIN(lon),0), COALESCE(MIN(lat),0),
-		       COALESCE(MAX(lon),0), COALESCE(MAX(lat),0)
-		FROM visits WHERE lat IS NOT NULL`).Scan(&b.West, &b.South, &b.East, &b.North)
+		       COALESCE(MAX(lon),0), COALESCE(MAX(lat),0),
+		       COUNT(*)
+		FROM visits WHERE lat IS NOT NULL`).
+		Scan(&b.West, &b.South, &b.East, &b.North, &b.Count)
 	if err != nil {
 		return nil, err
 	}

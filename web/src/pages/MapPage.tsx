@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { api } from '../lib/api';
-import { useAsync } from '../lib/hooks';
+import { useAsync, useRoute } from '../lib/hooks';
 import { dur } from '../lib/format';
 import { fitBounds, project, toScreen, viewBounds, type View } from '../lib/project';
 import type { BBox, MapPoint, TilesConfig } from '../lib/types';
@@ -8,8 +8,10 @@ import { Badge, Button, Card, Empty, ErrorBox, Spinner } from '../components/ui'
 
 type Layer = 'canvas' | 'leaflet';
 
+const LAYER_KEY = 'youlv.maplayer';
+
 export default function MapPage() {
-  const [layer, setLayer] = useState<Layer>('canvas');
+  const { go } = useRoute();
   const bounds = useAsync(() => api.mapBounds(), []);
   const tiles = useAsync(() => api.tiles(), []);
   const [selected, setSelected] = useState<MapPoint | null>(null);
@@ -17,6 +19,22 @@ export default function MapPage() {
   // 瓦片地址为空表示不提供底图（用户可以在设置里清空它），
   // 这时只留自绘层，不给一个点了没反应的按钮。
   const hasTiles = (tiles.data?.url_template ?? '') !== '';
+
+  // 默认用底图：自绘层只有经纬网格和几个圈，第一眼看上去就像「地图没加载出来」。
+  // 用户上次选过哪层就记住哪层；但如果底图被关掉了，就落到自绘。
+  const [layer, setLayer] = useState<Layer>(() => {
+    const saved = localStorage.getItem(LAYER_KEY);
+    return saved === 'canvas' || saved === 'leaflet' ? saved : 'leaflet';
+  });
+  const pickLayer = (v: Layer) => {
+    setLayer(v);
+    try {
+      localStorage.setItem(LAYER_KEY, v);
+    } catch {
+      // 隐私模式写不了就算了，不影响本次使用
+    }
+  };
+  const effective: Layer = hasTiles ? layer : 'canvas';
 
   return (
     <div className="flex flex-col gap-3">
@@ -27,9 +45,9 @@ export default function MapPage() {
           ).map(([v, label], i) => (
             <button
               key={v}
-              onClick={() => setLayer(v)}
+              onClick={() => pickLayer(v)}
               className={`px-2.5 py-1 text-[12px] ${
-                layer === v ? 'bg-accent text-white' : 'bg-surface text-muted hover:text-ink'
+                effective === v ? 'bg-accent text-white' : 'bg-surface text-muted hover:text-ink'
               } ${i === 0 ? 'rounded-l-md' : 'rounded-r-md'}`}
             >
               {label}
@@ -37,8 +55,19 @@ export default function MapPage() {
           ))}
         </div>
         <span className="text-[11px] text-faint">
-          {layer === 'canvas' ? '不请求任何外部瓦片，纯本地绘制' : '加载在线瓦片，需要能访问外网'}
+          {effective === 'canvas'
+            ? '不请求任何外部瓦片，纯本地绘制'
+            : `在线瓦片 · ${tiles.data?.attribution || ''}`}
         </span>
+        {tiles.data?.frame === 'gcj02' ? null : effective === 'leaflet' ? (
+          <button
+            onClick={() => go('/settings')}
+            className="text-[11px] text-warn hover:underline"
+            title="底图是 GCJ-02 的图源时必须把坐标系切到 GCJ-02，否则点位会整体偏几百米"
+          >
+            坐标系可能与底图不一致
+          </button>
+        ) : null}
       </div>
 
       {bounds.error ? (
@@ -47,13 +76,13 @@ export default function MapPage() {
         <Card className="grid h-[70vh] place-items-center">
           <Spinner label="正在计算视野" />
         </Card>
-      ) : bounds.data.east === bounds.data.west ? (
+      ) : (bounds.data.count ?? 0) === 0 ? (
         <Card>
           <Empty hint="导入带坐标的到访记录后，这里会画出你去过的所有地方。">
             还没有带坐标的到访
           </Empty>
         </Card>
-      ) : layer === 'canvas' ? (
+      ) : effective === 'canvas' ? (
         <CanvasMap bounds={bounds.data} selected={selected} onSelect={setSelected} />
       ) : tiles.data ? (
         <LeafletMap
@@ -61,6 +90,7 @@ export default function MapPage() {
           tiles={tiles.data}
           selected={selected}
           onSelect={setSelected}
+          onOpenSettings={() => go('/settings')}
         />
       ) : (
         <Card className="grid h-[70vh] place-items-center">
@@ -73,6 +103,29 @@ export default function MapPage() {
 
 // ---------------------------------------------------------------- 自绘层
 
+/**
+ * 把范围撑到至少 0.01°（约 1 公里）。
+ *
+ * 只有一个地点时 west===east、south===north，范围退化成一个点：
+ * 自绘层会算出天文数字的缩放倍数，Leaflet 则直接顶到 maxZoom，
+ * 两种情况看上去都像「地图坏了」。
+ */
+function spreadBox(b: BBox) {
+  const min = 0.01;
+  let { west, east, south, north } = b;
+  if (east - west < min) {
+    const c = (east + west) / 2;
+    west = c - min / 2;
+    east = c + min / 2;
+  }
+  if (north - south < min) {
+    const c = (north + south) / 2;
+    south = c - min / 2;
+    north = c + min / 2;
+  }
+  return { west, south, east, north };
+}
+
 function CanvasMap({
   bounds,
   selected,
@@ -84,13 +137,7 @@ function CanvasMap({
 }) {
   const wrapRef = useRef<HTMLDivElement>(null);
   const [size, setSize] = useState({ w: 800, h: 520 });
-  const [view, setView] = useState<View>(() =>
-    fitBounds(
-      { south: bounds.south, west: bounds.west, north: bounds.north, east: bounds.east },
-      800,
-      520
-    )
-  );
+  const [view, setView] = useState<View>(() => fitBounds(spreadBox(bounds), 800, 520));
   const drag = useRef<{ x: number; y: number; cx: number; cy: number } | null>(null);
 
   useEffect(() => {
@@ -142,14 +189,7 @@ function CanvasMap({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [points, view.cx, view.cy, view.k, size.w, size.h, maxN]);
 
-  const reset = () =>
-    setView(
-      fitBounds(
-        { south: bounds.south, west: bounds.west, north: bounds.north, east: bounds.east },
-        size.w,
-        size.h
-      )
-    );
+  const reset = () => setView(fitBounds(spreadBox(bounds), size.w, size.h));
 
   const onWheel = useCallback(
     (e: WheelEvent) => {
@@ -374,22 +414,30 @@ function LeafletMap({
   bounds,
   tiles,
   selected,
-  onSelect
+  onSelect,
+  onOpenSettings
 }: {
   bounds: BBox;
   tiles: TilesConfig;
   selected: MapPoint | null;
   onSelect: (p: MapPoint | null) => void;
+  onOpenSettings: () => void;
 }) {
   const ref = useRef<HTMLDivElement>(null);
   const [err, setErr] = useState<string | null>(null);
   const [ready, setReady] = useState(false);
+  // 瓦片 404 / 连不通时 Leaflet 不会抛错，只是留一片空白。
+  // 必须自己数失败次数，否则用户看到的永远是「地图没反应」。
+  const [tileFail, setTileFail] = useState(0);
 
   useEffect(() => {
     const el = ref.current;
     if (!el) return;
     let map: import('leaflet').Map | null = null;
     let cancelled = false;
+    setErr(null);
+    setReady(false);
+    setTileFail(0);
 
     (async () => {
       try {
@@ -399,15 +447,18 @@ function LeafletMap({
         map = L.map(el, { zoomControl: true, attributionControl: true });
         // 瓦片地址与子域都来自服务端设置：自托管用户可以指向自己的瓦片
         // 服务器（离线、内网、自建），不必改前端代码。
-        L.tileLayer(tiles.url_template, {
+        const layer = L.tileLayer(tiles.url_template, {
           subdomains: tiles.subdomains
             .split(',')
             .map((s) => s.trim())
             .filter(Boolean),
           maxZoom: tiles.max_zoom,
           attribution: tiles.attribution
-        }).addTo(map);
-        map.fitBounds(L.latLngBounds([bounds.south, bounds.west], [bounds.north, bounds.east]), {
+        });
+        layer.on('tileerror', () => setTileFail((n) => n + 1));
+        layer.addTo(map);
+        const box = spreadBox(bounds);
+        map.fitBounds(L.latLngBounds([box.south, box.west], [box.north, box.east]), {
           padding: [24, 24]
         });
         // 图层组只建一次：以前每次 load() 都新建一个 addTo(map)，旧的从不移除，
@@ -418,12 +469,15 @@ function LeafletMap({
           if (!map) return;
           const b = map.getBounds();
           const mine = ++seq;
-          const list = await api.mapPoints({
-            west: b.getWest(),
-            south: b.getSouth(),
-            east: b.getEast(),
-            north: b.getNorth()
-          });
+          const list = await api.mapPoints(
+            {
+              west: b.getWest(),
+              south: b.getSouth(),
+              east: b.getEast(),
+              north: b.getNorth()
+            },
+            tiles.frame === 'gcj02' ? 'gcj02' : 'wgs84'
+          );
           // 过期响应（期间又移动过）直接丢弃，否则先发后到会盖掉新的视野。
           if (cancelled || mine !== seq) return;
           g.clearLayers();
@@ -460,26 +514,60 @@ function LeafletMap({
       cancelled = true;
       map?.remove();
     };
+    // 底图配置变了必须重建地图：否则在设置里换了图源、回到这里还是旧图，
+    // 用户只能刷新页面才生效。
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [
+    tiles.url_template,
+    tiles.subdomains,
+    tiles.max_zoom,
+    tiles.attribution,
+    tiles.frame,
+    bounds.south,
+    bounds.west,
+    bounds.north,
+    bounds.east
+  ]);
 
   return (
-    <div className="flex gap-2">
-      <Card padded={false} className="min-w-0 flex-1 overflow-hidden">
-        {err ? (
-          <div className="p-3">
-            <ErrorBox>底图加载失败：{err}</ErrorBox>
-          </div>
-        ) : !ready ? (
-          <div className="grid h-[62vh] min-h-[320px] place-items-center">
-            <Spinner label="正在加载底图" />
-          </div>
-        ) : null}
-        <div ref={ref} className="h-[62vh] min-h-[320px] w-full" />
-      </Card>
-      <aside className="hidden w-56 shrink-0 lg:block">
-        {selected ? <PointCard p={selected} /> : null}
-      </aside>
+    <div className="flex flex-col gap-2">
+      {tileFail >= 4 ? (
+        <div className="flex flex-wrap items-center gap-2 rounded-md border border-warn/40 bg-warn-soft px-3 py-2 text-[12px] text-warn">
+          <span className="min-w-0 flex-1">
+            底图瓦片一直加载不出来：当前网络多半访问不到这个图源（{hostOf(tiles.url_template)}）。
+            可以换一个瓦片源，或者切到「自绘」层先看点位。
+          </span>
+          <Button size="sm" variant="ghost" onClick={onOpenSettings}>
+            去设置换图源
+          </Button>
+        </div>
+      ) : null}
+      <div className="flex gap-2">
+        <Card padded={false} className="min-w-0 flex-1 overflow-hidden">
+          {err ? (
+            <div className="p-3">
+              <ErrorBox>底图加载失败：{err}</ErrorBox>
+            </div>
+          ) : !ready ? (
+            <div className="grid h-[62vh] min-h-[320px] place-items-center">
+              <Spinner label="正在加载底图" />
+            </div>
+          ) : null}
+          <div ref={ref} className="h-[62vh] min-h-[320px] w-full" />
+        </Card>
+        <aside className="hidden w-56 shrink-0 lg:block">
+          {selected ? <PointCard p={selected} /> : null}
+        </aside>
+      </div>
     </div>
   );
+}
+
+/** 从 URL 模板里抠出主机名，用来在报错里说清「是哪个源连不上」。 */
+function hostOf(tpl: string): string {
+  try {
+    return new URL(tpl.replace('{s}', '1')).host;
+  } catch {
+    return tpl.slice(0, 40);
+  }
 }
