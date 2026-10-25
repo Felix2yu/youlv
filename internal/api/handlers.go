@@ -4,8 +4,10 @@ import (
 	"database/sql"
 	"encoding/csv"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
 	"strconv"
 	"time"
@@ -29,12 +31,14 @@ func (s *Server) meta(w http.ResponseWriter, r *http.Request) error {
 // ---------- 时间轴 ----------
 
 func (s *Server) timelineDay(w http.ResponseWriter, r *http.Request) error {
-	date := query(r, "date", "")
-	if date == "" {
-		writeErr(w, http.StatusBadRequest, "缺少 date 参数")
+	date, ok := queryDate(r, "date")
+	if !ok {
+		// 格式不对必须报错：查询按字符串比较，2024-1-1 和 2024-01-01
+		// 在 SQL 里是两回事，静默放过就是「查不到但不告诉你」。
+		writeErr(w, http.StatusBadRequest, "date 参数需要是 YYYY-MM-DD（例如 2026-10-26）")
 		return nil
 	}
-	list, err := s.st.TimelineDay(r.Context(), date, query(r, "frame", "wgs84"))
+	list, err := s.st.TimelineDay(r.Context(), date, queryFrame(r))
 	if err != nil {
 		return err
 	}
@@ -43,9 +47,9 @@ func (s *Server) timelineDay(w http.ResponseWriter, r *http.Request) error {
 }
 
 func (s *Server) timelineMonth(w http.ResponseWriter, r *http.Request) error {
-	month := query(r, "month", "")
-	if month == "" {
-		writeErr(w, http.StatusBadRequest, "缺少 month 参数")
+	month, ok := queryMonth(r, "month")
+	if !ok {
+		writeErr(w, http.StatusBadRequest, "month 参数需要是 YYYY-MM（例如 2026-10）")
 		return nil
 	}
 	days, err := s.st.TimelineMonth(r.Context(), month)
@@ -57,13 +61,23 @@ func (s *Server) timelineMonth(w http.ResponseWriter, r *http.Request) error {
 }
 
 func (s *Server) timelineRange(w http.ResponseWriter, r *http.Request) error {
+	from, fromOK := queryDate(r, "from")
+	if r.URL.Query().Get("from") != "" && !fromOK {
+		writeErr(w, http.StatusBadRequest, "from 参数需要是 YYYY-MM-DD")
+		return nil
+	}
+	to, toOK := queryDate(r, "to")
+	if r.URL.Query().Get("to") != "" && !toOK {
+		writeErr(w, http.StatusBadRequest, "to 参数需要是 YYYY-MM-DD")
+		return nil
+	}
 	f := store.TimelineFilter{
-		From: query(r, "from", ""), To: query(r, "to", ""),
+		From: from, To: to,
 		Q: query(r, "q", ""), Activity: query(r, "activity", ""),
 		PlaceID: int64(queryInt(r, "place_id", 0)),
-		Limit:   queryInt(r, "limit", 100), Offset: queryInt(r, "offset", 0),
+		Limit:   queryLimit(r, 100, maxPageSize), Offset: queryOffset(r),
 	}
-	list, total, err := s.st.TimelineRange(r.Context(), f, query(r, "frame", "wgs84"))
+	list, total, err := s.st.TimelineRange(r.Context(), f, queryFrame(r))
 	if err != nil {
 		return err
 	}
@@ -78,7 +92,7 @@ func (s *Server) places(w http.ResponseWriter, r *http.Request) error {
 		Q: query(r, "q", ""), City: query(r, "city", ""),
 		Origin: query(r, "origin", ""), Sort: query(r, "sort", ""),
 		HasCoord: r.URL.Query().Get("has_coord") == "1",
-		Limit:    queryInt(r, "limit", 100), Offset: queryInt(r, "offset", 0),
+		Limit:    queryLimit(r, 100, maxPageSize), Offset: queryOffset(r),
 	}
 	list, total, err := s.st.Places(r.Context(), f)
 	if err != nil {
@@ -174,10 +188,37 @@ func (s *Server) statsHourly(w http.ResponseWriter, r *http.Request) error {
 // ---------- 地图 ----------
 
 func (s *Server) mapPoints(w http.ResponseWriter, r *http.Request) error {
-	bbox := store.BBox{
-		West: queryFloat(r, "west", -180), South: queryFloat(r, "south", -90),
-		East: queryFloat(r, "east", 180), North: queryFloat(r, "north", 90),
+	// 边界值逐个校验：NaN 会被 ParseFloat 接受、越界值（如 south=-200）不会报错，
+	// 两者都只是让 BETWEEN 恒假，表现为「地图一片空白」且看不出原因。
+	west, ok := queryBBoxFloat(r, "west", -180, -180, 180)
+	if !ok {
+		writeErr(w, http.StatusBadRequest, "west 不是合法经度")
+		return nil
 	}
+	south, ok := queryBBoxFloat(r, "south", -90, -90, 90)
+	if !ok {
+		writeErr(w, http.StatusBadRequest, "south 不是合法纬度")
+		return nil
+	}
+	east, ok := queryBBoxFloat(r, "east", 180, -180, 180)
+	if !ok {
+		writeErr(w, http.StatusBadRequest, "east 不是合法经度")
+		return nil
+	}
+	north, ok := queryBBoxFloat(r, "north", 90, -90, 90)
+	if !ok {
+		writeErr(w, http.StatusBadRequest, "north 不是合法纬度")
+		return nil
+	}
+	if west > east {
+		writeErr(w, http.StatusBadRequest, "west 不能大于 east")
+		return nil
+	}
+	if south > north {
+		writeErr(w, http.StatusBadRequest, "south 不能大于 north")
+		return nil
+	}
+	bbox := store.BBox{West: west, South: south, East: east, North: north}
 	list, err := s.st.MapPoints(r.Context(), bbox)
 	if err != nil {
 		return err
@@ -207,7 +248,9 @@ func (s *Server) weather(w http.ResponseWriter, r *http.Request) error {
 	if at == 0 {
 		at = nowUnix()
 	}
-	w0, err := s.st.WeatherFor(r.Context(), placeID, at, r.URL.Query().Get("approx") != "0")
+	// 用和设置项一致的布尔判读：从前写的是 != "0"，于是 ?approx=false
+	// 也被当成 true，用户关不掉近似天气。
+	w0, err := s.st.WeatherFor(r.Context(), placeID, at, queryBool(r, "approx", true))
 	if err != nil {
 		return err
 	}
@@ -217,38 +260,83 @@ func (s *Server) weather(w http.ResponseWriter, r *http.Request) error {
 
 // ---------- 导入 ----------
 
-// maxUploadBytes 限制单次上传体积。四份 CSV 合计约 2 MB，64 MB 足够宽松。
+// maxUploadBytes 是**整个请求体**的硬上限。
+//
+// ParseMultipartForm 的参数只是「超出后溢写到临时文件」的水位，并不限制总量——
+// 一个大文件照样会在随后被整体读进内存。所以先套一层 MaxBytesReader：
+// 四份 Rond CSV 合计约 2 MB，64 MB 对个人数据足够宽松，同时把内存占用封住。
 const maxUploadBytes = 64 << 20
 
-func (s *Server) importPreview(w http.ResponseWriter, r *http.Request) error {
-	if err := r.ParseMultipartForm(maxUploadBytes); err != nil {
-		writeErr(w, http.StatusBadRequest, "上传解析失败："+err.Error())
-		return nil
+// spillToDiskBytes 是 multipart 解析的内存水位：超出的部分写临时文件。
+const spillToDiskBytes = 8 << 20
+
+// errUploadTooLarge 表示请求体超过 maxUploadBytes。
+var errUploadTooLarge = errors.New("上传内容超出上限")
+
+// readUploads 解析 multipart 表单并读出全部文件。
+func readUploads(w http.ResponseWriter, r *http.Request) ([]importer.UploadedFile, error) {
+	r.Body = http.MaxBytesReader(w, r.Body, maxUploadBytes)
+	if err := r.ParseMultipartForm(spillToDiskBytes); err != nil {
+		var mx *http.MaxBytesError
+		if errors.As(err, &mx) {
+			return nil, errUploadTooLarge
+		}
+		return nil, errors.New("上传解析失败")
 	}
 	form := r.MultipartForm
 	if form == nil || len(form.File) == 0 {
-		writeErr(w, http.StatusBadRequest, "没有收到任何文件")
-		return nil
+		return nil, errors.New("没有收到文件")
 	}
 	var files []importer.UploadedFile
 	for _, fh := range form.File {
 		for _, h := range fh {
 			f, err := h.Open()
 			if err != nil {
-				writeErr(w, http.StatusBadRequest, "读取文件失败："+h.Filename)
-				return nil
+				return nil, fmt.Errorf("读取文件失败：%s", h.Filename)
 			}
 			buf := make([]byte, h.Size)
 			if _, err := io.ReadFull(f, buf); err != nil {
 				f.Close()
-				writeErr(w, http.StatusBadRequest, "读取文件失败："+h.Filename)
-				return nil
+				return nil, fmt.Errorf("读取文件失败：%s", h.Filename)
 			}
 			f.Close()
 			files = append(files, importer.UploadedFile{
 				Name: h.Filename, Size: h.Size, Content: buf,
 			})
 		}
+	}
+	return files, nil
+}
+
+// writeImportErr 统一处理导入类错误。
+//
+// 只有 importer.UserError（文案本身就是写给用户看的）才原样返回；其余错误
+// 可能夹着文件路径、SQL 片段、内部状态，一律只进日志、对外给通用文案。
+func writeImportErr(w http.ResponseWriter, err error) {
+	var ue *importer.UserError
+	switch {
+	case errors.Is(err, importer.ErrBatchNotFound):
+		writeErr(w, http.StatusNotFound, "批次不存在")
+	case errors.Is(err, importer.ErrBatchHasData):
+		writeErr(w, http.StatusConflict, err.Error())
+	case errors.As(err, &ue):
+		writeErr(w, http.StatusBadRequest, ue.Msg)
+	default:
+		log.Printf("[api] 导入失败: %v", err)
+		writeErr(w, http.StatusInternalServerError, "服务端开小差了，请稍后重试")
+	}
+}
+
+func (s *Server) importPreview(w http.ResponseWriter, r *http.Request) error {
+	files, err := readUploads(w, r)
+	if err != nil {
+		if errors.Is(err, errUploadTooLarge) {
+			writeErr(w, http.StatusRequestEntityTooLarge,
+				fmt.Sprintf("上传内容超过 %d MB，请分几批导入", maxUploadBytes>>20))
+			return nil
+		}
+		writeErr(w, http.StatusBadRequest, err.Error())
+		return nil
 	}
 
 	opt, err := optionsFromRequest(r)
@@ -258,7 +346,7 @@ func (s *Server) importPreview(w http.ResponseWriter, r *http.Request) error {
 	}
 	rep, err := s.imp.Preview(r.Context(), files, opt)
 	if err != nil {
-		writeErr(w, http.StatusBadRequest, err.Error())
+		writeImportErr(w, err)
 		return nil
 	}
 	writeJSON(w, http.StatusOK, rep)
@@ -267,7 +355,14 @@ func (s *Server) importPreview(w http.ResponseWriter, r *http.Request) error {
 
 // importDetect 只做类型探测，供前端拖入文件后立即回显识别结果。
 func (s *Server) importDetect(w http.ResponseWriter, r *http.Request) error {
-	if err := r.ParseMultipartForm(maxUploadBytes); err != nil {
+	r.Body = http.MaxBytesReader(w, r.Body, maxUploadBytes)
+	if err := r.ParseMultipartForm(spillToDiskBytes); err != nil {
+		var mx *http.MaxBytesError
+		if errors.As(err, &mx) {
+			writeErr(w, http.StatusRequestEntityTooLarge,
+				fmt.Sprintf("上传内容超过 %d MB，请分几批导入", maxUploadBytes>>20))
+			return nil
+		}
 		writeErr(w, http.StatusBadRequest, "上传解析失败")
 		return nil
 	}
@@ -325,7 +420,7 @@ func (s *Server) importCommit(w http.ResponseWriter, r *http.Request) error {
 	}
 	rep, err := s.imp.Commit(r.Context(), batchNo, d)
 	if err != nil {
-		writeErr(w, http.StatusBadRequest, err.Error())
+		writeImportErr(w, err)
 		return nil
 	}
 	writeJSON(w, http.StatusOK, rep)
@@ -335,7 +430,7 @@ func (s *Server) importCommit(w http.ResponseWriter, r *http.Request) error {
 func (s *Server) importRollback(w http.ResponseWriter, r *http.Request) error {
 	res, err := s.imp.Rollback(r.Context(), r.PathValue("batchNo"))
 	if err != nil {
-		writeErr(w, http.StatusBadRequest, err.Error())
+		writeImportErr(w, err)
 		return nil
 	}
 	writeJSON(w, http.StatusOK, res)
@@ -343,7 +438,7 @@ func (s *Server) importRollback(w http.ResponseWriter, r *http.Request) error {
 }
 
 func (s *Server) importList(w http.ResponseWriter, r *http.Request) error {
-	list, err := s.imp.List(r.Context(), queryInt(r, "limit", 50))
+	list, err := s.imp.List(r.Context(), queryLimit(r, 50, maxPageSize))
 	if err != nil {
 		return err
 	}
@@ -354,8 +449,11 @@ func (s *Server) importList(w http.ResponseWriter, r *http.Request) error {
 func (s *Server) importDetail(w http.ResponseWriter, r *http.Request) error {
 	rep, err := s.imp.Report(r.Context(), r.PathValue("batchNo"))
 	if err != nil {
-		writeErr(w, http.StatusNotFound, "批次不存在")
-		return nil
+		if errors.Is(err, importer.ErrBatchNotFound) {
+			writeErr(w, http.StatusNotFound, "批次不存在")
+			return nil
+		}
+		return err
 	}
 	writeJSON(w, http.StatusOK, rep)
 	return nil
@@ -388,7 +486,7 @@ func (s *Server) importIssues(w http.ResponseWriter, r *http.Request) error {
 		}
 	}
 	q += " ORDER BY line LIMIT ? OFFSET ?"
-	args = append(args, queryInt(r, "limit", 200), queryInt(r, "offset", 0))
+	args = append(args, queryLimit(r, 200, maxPageSize), queryOffset(r))
 
 	var total int
 	if err := s.st.DB.QueryRowContext(r.Context(), countQ, countArgs...).Scan(&total); err != nil {

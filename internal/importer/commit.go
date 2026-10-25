@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"os"
 	"path/filepath"
 	"strings"
 	"time"
@@ -40,6 +41,8 @@ func (s *Service) Commit(ctx context.Context, batchNo string, d Decisions) (*Rep
 	if err != nil {
 		return nil, err
 	}
+	// 暂存是否还在留给后面判：批次存不存在要先查库，否则一个不存在的批次号
+	// 会先撞上「预检产物已不在」这个 400，而不是该有的 404。
 
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
@@ -49,10 +52,36 @@ func (s *Service) Commit(ctx context.Context, batchNo string, d Decisions) (*Rep
 	defer tx.Rollback()
 
 	var importID int64
-	var optJSON string
+	var optJSON, reportJSON, status string
 	if err := tx.QueryRowContext(ctx,
-		`SELECT id, options_json FROM imports WHERE batch_no=?`, batchNo).Scan(&importID, &optJSON); err != nil {
-		return nil, fmt.Errorf("批次 %s 不存在: %w", batchNo, err)
+		`SELECT id, options_json, report_json, status FROM imports WHERE batch_no=?`, batchNo).
+		Scan(&importID, &optJSON, &reportJSON, &status); err != nil {
+		return nil, fmt.Errorf("%w: %s", ErrBatchNotFound, batchNo)
+	}
+	// 状态机守卫。这一段不能只靠前端禁用按钮：API 是可以直接调的。
+	// 尤其是 rolled_back —— 暂存文件还在，放行提交会把刚撤销的数据「复活」，
+	// 而用户看到的却是「撤销成功」。
+	switch status {
+	case StatusSuccess:
+		return nil, UserErrf("批次 %s 已经导入过了，不能重复提交", batchNo)
+	case StatusRolledBack:
+		return nil, UserErrf("批次 %s 已撤销，请重新预检后再导入", batchNo)
+	case StatusRunning:
+		return nil, UserErrf("批次 %s 正在导入中，请稍候", batchNo)
+	}
+	if !d.Force {
+		var prev Report
+		if err := json.Unmarshal([]byte(reportJSON), &prev); err == nil && len(prev.Blocking) > 0 {
+			return nil, UserErrf("预检有 %d 项阻断问题，导入会大面积失败：%s",
+				len(prev.Blocking), prev.Blocking[0])
+		}
+	}
+	// 暂存目录没了（被清理、换机器、手动删过）时不要静默写个空批次：
+	// 四个切片全空，事务照样提交，界面上就是一次「成功导入 0 条」。
+	if len(places)+len(visits)+len(trips)+len(weather) == 0 {
+		if _, statErr := os.Stat(dir); statErr != nil {
+			return nil, UserErrf("批次 %s 的预检产物已不在了，请重新上传文件预检", batchNo)
+		}
 	}
 	var opt Options
 	_ = json.Unmarshal([]byte(optJSON), &opt)
@@ -103,11 +132,26 @@ func (s *Service) Commit(ctx context.Context, batchNo string, d Decisions) (*Rep
 		return nil, err
 	}
 
+	// 审计列必须真的写：批次列表与批次详情读的就是 rows_inserted/rows_failed，
+	// 从前这两列恒为 0，「写入时失败了 300 行」和「全部成功」在界面上长得一样。
+	var ins2, skip2, fail int
+	for _, st := range stats {
+		ins2 += st[0]
+		skip2 += st[1]
+		fail += st[2]
+	}
 	now := time.Now().Unix()
 	stJSON, _ := json.Marshal(stats)
-	if _, err := tx.ExecContext(ctx,
-		`UPDATE imports SET status=?, finished_at=?, duration_ms=?, stats_json=? WHERE id=?`,
-		StatusSuccess, now, time.Since(started).Milliseconds(), string(stJSON), importID); err != nil {
+	var errSummary any
+	if fail > 0 {
+		errSummary = fmt.Sprintf("%d 行写入失败", fail)
+	}
+	if _, err := tx.ExecContext(ctx, `
+		UPDATE imports SET status=?, finished_at=?, duration_ms=?, stats_json=?,
+			rows_inserted=?, rows_skipped=?, rows_failed=?, error_summary=?
+		WHERE id=?`,
+		StatusSuccess, now, time.Since(started).Milliseconds(), string(stJSON),
+		ins2, skip2, fail, errSummary, importID); err != nil {
 		return nil, err
 	}
 	if err := tx.Commit(); err != nil {

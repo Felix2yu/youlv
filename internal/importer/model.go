@@ -60,7 +60,13 @@ type FileStat struct {
 	Detected   string     `json:"detected"` // 自动识别的类型
 	Confidence float64    `json:"confidence"`
 	Missing    []string   `json:"missing,omitempty"`
-	Extra      []string   `json:"extra,omitempty"`
+	// MissingOpt 是「认识但没提供」的列。它不阻断导入，却会让对应数据静默
+	// 变空（缺经纬度 → 坐标 (0,0)；缺温度 → 天气没有温度），必须回显给用户。
+	// 从前它只在 /detect 端点可见，预检报告里看不到。
+	MissingOpt []string `json:"missing_opt,omitempty"`
+	// Encoding 是这份文件实际按哪种编码解码的（utf-8 / gb18030 / unknown）。
+	Encoding string   `json:"encoding,omitempty"`
+	Extra    []string `json:"extra,omitempty"`
 }
 
 // FieldDiff 是冲突裁决里的一个字段差异。
@@ -140,6 +146,8 @@ type Decisions struct {
 	WeatherStrategy string `json:"weather_strategy"`
 	// WeatherOverrides 逐组覆盖：conflictKey -> "old"|"new"
 	WeatherOverrides map[string]string `json:"weather_overrides"`
+	// Force 为真时忽略预检的阻断项强行提交。UI 不暴露，只给明确知道后果的调用方。
+	Force bool `json:"force,omitempty"`
 }
 
 // 状态常量。

@@ -3,6 +3,7 @@ package api
 import (
 	"encoding/json"
 	"errors"
+	"log"
 	"net/http"
 	"strconv"
 
@@ -36,11 +37,11 @@ func (s *Server) visitDetail(w http.ResponseWriter, r *http.Request) error {
 
 // tags 返回标签字典及各自的使用次数。
 func (s *Server) tags(w http.ResponseWriter, r *http.Request) error {
-	list, err := s.st.Tags(r.Context(), queryInt(r, "limit", 100), queryInt(r, "offset", 0))
+	list, total, err := s.st.Tags(r.Context(), queryLimit(r, 100, maxPageSize), queryOffset(r))
 	if err != nil {
 		return err
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"items": list})
+	writeJSON(w, http.StatusOK, map[string]any{"items": list, "total": total})
 	return nil
 }
 
@@ -119,7 +120,8 @@ func (s *Server) importPurge(w http.ResponseWriter, r *http.Request) error {
 	}
 	res, err := s.imp.Purge(r.Context())
 	if err != nil {
-		writeErr(w, http.StatusInternalServerError, err.Error())
+		log.Printf("[api] 清空数据失败: %v", err)
+		writeErr(w, http.StatusInternalServerError, "清空失败，详情见服务端日志")
 		return nil
 	}
 	writeJSON(w, http.StatusOK, res)
@@ -140,7 +142,7 @@ func (s *Server) importDelete(w http.ResponseWriter, r *http.Request) error {
 			writeErr(w, http.StatusConflict, err.Error())
 			return nil
 		}
-		writeErr(w, http.StatusBadRequest, err.Error())
+		writeImportErr(w, err)
 		return nil
 	}
 	w.WriteHeader(http.StatusNoContent)

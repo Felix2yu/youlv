@@ -17,12 +17,19 @@ type TagDTO struct {
 }
 
 // Tags 返回标签字典及各自的使用次数，按使用次数从多到少。
-func (s *Store) Tags(ctx context.Context, limit, offset int) ([]TagDTO, error) {
+//
+// 同时返回总数：标签面板要分页，没有 total 就算不出页码。
+func (s *Store) Tags(ctx context.Context, limit, offset int) ([]TagDTO, int, error) {
 	if limit <= 0 {
 		limit = 100
 	}
 	if offset < 0 {
 		offset = 0
+	}
+	var total int
+	if err := s.DB.QueryRowContext(ctx, `SELECT COUNT(*) FROM tags`).
+		Scan(&total); err != nil {
+		return nil, 0, err
 	}
 	rows, err := s.DB.QueryContext(ctx, `
 		SELECT t.id, t.name, COALESCE(t.color,''), COUNT(vt.visit_id),
@@ -34,7 +41,7 @@ func (s *Store) Tags(ctx context.Context, limit, offset int) ([]TagDTO, error) {
 		ORDER BY COUNT(vt.visit_id) DESC, t.name
 		LIMIT ? OFFSET ?`, limit, offset)
 	if err != nil {
-		return nil, err
+		return nil, 0, err
 	}
 	defer rows.Close()
 	out := []TagDTO{}
@@ -42,9 +49,9 @@ func (s *Store) Tags(ctx context.Context, limit, offset int) ([]TagDTO, error) {
 		var t TagDTO
 		if err := rows.Scan(&t.ID, &t.Name, &t.Color, &t.Count,
 			&t.FirstVisitAt, &t.LastVisitAt); err != nil {
-			return nil, err
+			return nil, 0, err
 		}
 		out = append(out, t)
 	}
-	return out, rows.Err()
+	return out, total, rows.Err()
 }

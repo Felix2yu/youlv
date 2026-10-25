@@ -59,6 +59,10 @@ func (s *Store) Meta(ctx context.Context) (*Meta, error) {
 // ---------- 时间轴 ----------
 
 // VisitDTO 是时间轴里的一条到访。
+//
+// 坐标语义（务必与前端对齐）：lat/lon 是**按请求坐标系选出**的主坐标，
+// frame=gcj02 时这里装的是 GCJ-02；lat_gcj/lon_gcj 恒为 GCJ-02 副本。
+// 要拿权威存储的 WGS-84，请用 frame=wgs84（默认）。
 type VisitDTO struct {
 	ID            int64    `json:"id"`
 	PlaceID       int64    `json:"place_id"`
@@ -92,19 +96,26 @@ func coordExpr(frame string) (lat, lon string) {
 	return "v.lat", "v.lon"
 }
 
+// gcjExpr 是「渲染副本」的固定列，与主坐标列一起返回。
+//
+// 两者必须同时出现：frame=gcj02 时主坐标列里装的是 GCJ-02 值，若不同时给出
+// 权威的 WGS-84 副本，客户端就会拿着火星坐标当 WGS-84 用（静默偏移数百米），
+// 而 VisitDetail / PlaceDTO / MapPoint 都是双坐标齐全的，唯独时间轴缺一半。
+const gcjExpr = "v.lat_gcj, v.lon_gcj"
+
 func (s *Store) TimelineDay(ctx context.Context, date, frame string) ([]VisitDTO, error) {
 	latE, lonE := coordExpr(frame)
 	q := fmt.Sprintf(`
 		SELECT v.id, v.place_id, COALESCE(p.display_name, v.place_name_raw),
 		       COALESCE(p.city,''), COALESCE(a.name, v.activity_raw), COALESCE(a.color,'#8E8E93'),
 		       v.arrived_at, v.departed_at, v.duration_s, v.arrived_local,
-		       COALESCE(v.departed_local,''), v.local_date, %s, %s,
+		       COALESCE(v.departed_local,''), v.local_date, %s, %s, %s,
 		       COALESCE(v.note,''), COALESCE(v.tags_raw,'')
 		FROM visits v
 		LEFT JOIN places p ON p.id = v.place_id
 		LEFT JOIN activities a ON a.id = v.activity_id
 		WHERE v.local_date = ?
-		ORDER BY v.arrived_at`, latE, lonE)
+		ORDER BY v.arrived_at`, latE, lonE, gcjExpr)
 	rows, err := s.DB.QueryContext(ctx, q, date)
 	if err != nil {
 		return nil, err
@@ -190,12 +201,12 @@ func (s *Store) TimelineRange(ctx context.Context, f TimelineFilter, frame strin
 		SELECT v.id, v.place_id, COALESCE(p.display_name, v.place_name_raw),
 		       COALESCE(p.city,''), COALESCE(a.name, v.activity_raw), COALESCE(a.color,'#8E8E93'),
 		       v.arrived_at, v.departed_at, v.duration_s, v.arrived_local,
-		       COALESCE(v.departed_local,''), v.local_date, %s, %s,
+		       COALESCE(v.departed_local,''), v.local_date, %s, %s, %s,
 		       COALESCE(v.note,''), COALESCE(v.tags_raw,'')
 		FROM visits v
 		LEFT JOIN places p ON p.id = v.place_id
 		LEFT JOIN activities a ON a.id = v.activity_id
-		%s ORDER BY v.arrived_at DESC LIMIT ? OFFSET ?`, latE, lonE, w)
+		%s ORDER BY v.arrived_at DESC LIMIT ? OFFSET ?`, latE, lonE, gcjExpr, w)
 	args = append(args, limit, offset)
 	rows, err := s.DB.QueryContext(ctx, q, args...)
 	if err != nil {
@@ -223,7 +234,7 @@ func scanVisits(rows *sql.Rows) ([]VisitDTO, error) {
 		var tagsRaw string
 		if err := rows.Scan(&v.ID, &v.PlaceID, &v.PlaceName, &v.City, &v.Activity, &v.Color,
 			&v.ArrivedAt, &v.DepartedAt, &v.DurationS, &v.ArrivedLocal, &v.DepartedLocal,
-			&v.LocalDate, &v.Lat, &v.Lon, &v.Note, &tagsRaw); err != nil {
+			&v.LocalDate, &v.Lat, &v.Lon, &v.LatGCJ, &v.LonGCJ, &v.Note, &tagsRaw); err != nil {
 			return nil, err
 		}
 		if tagsRaw != "" {
@@ -383,10 +394,14 @@ type CityStat struct {
 
 // StatsCities 是「城市护照」：按城市聚合到访。
 func (s *Store) StatsCities(ctx context.Context) ([]CityStat, error) {
+	// LEFT JOIN 而不是 JOIN：visits.place_id=0 是「未解析到地点」的哨兵，
+	// 在任何 places 行里都没有匹配。用 INNER JOIN 会把这些到访从城市护照里
+	// 静默抹掉——同一批数据，时间轴数得出、统计页数不出。
 	rows, err := s.DB.QueryContext(ctx, `
 		SELECT COALESCE(p.city,'未标注'), COALESCE(p.admin_area,''),
-		       COUNT(DISTINCT p.id), COUNT(*), COALESCE(SUM(v.duration_s),0), MIN(v.arrived_at)
-		FROM visits v JOIN places p ON p.id = v.place_id
+		       COUNT(DISTINCT CASE WHEN v.place_id > 0 THEN v.place_id END),
+		       COUNT(*), COALESCE(SUM(v.duration_s),0), MIN(v.arrived_at)
+		FROM visits v LEFT JOIN places p ON p.id = v.place_id
 		GROUP BY p.city, p.admin_area ORDER BY 5 DESC`)
 	if err != nil {
 		return nil, err

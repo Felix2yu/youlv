@@ -3,6 +3,7 @@ package importer
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"math"
 	"os"
@@ -195,6 +196,35 @@ func TestPreviewFlagsInvertedTime(t *testing.T) {
 	}
 	if !found {
 		t.Fatal("未检出时间倒挂")
+	}
+}
+
+// 坏文件（这里是空文件）会让 decoded 与上传列表错位。审计表必须按 decoded
+// 自己的元数据落，否则「空文件.csv」会带着地点文件的 sha256 和行数。
+func TestPreviewAuditPairsFileWithItsOwnMeta(t *testing.T) {
+	s := newSvc(t)
+	_, err := s.Preview(context.Background(), []UploadedFile{
+		upload("空文件.csv", ""),
+		upload("地点记录.csv", samplePlaces),
+	}, DefaultOptions())
+	if err != nil {
+		t.Fatalf("Preview: %v", err)
+	}
+	var name, sha string
+	var rows int
+	if err := s.db.QueryRow(`
+		SELECT file_name, sha256, rows_total FROM imports_files
+		WHERE id = (SELECT MAX(id) FROM imports_files)`).Scan(&name, &sha, &rows); err != nil {
+		t.Fatalf("读审计表: %v", err)
+	}
+	if name != "地点记录.csv" {
+		t.Errorf("file_name = %q，应为 地点记录.csv（错位时会写成 空文件.csv）", name)
+	}
+	if rows != 2 {
+		t.Errorf("rows_total = %d，应为 2（地点文件两行）", rows)
+	}
+	if sha == "" {
+		t.Error("sha256 为空")
 	}
 }
 
@@ -805,5 +835,93 @@ func TestReportNormalizesLegacyNullLists(t *testing.T) {
 	}
 	if strings.Contains(string(raw), `"conflicts":null`) {
 		t.Errorf("历史批次的 conflicts 仍序列化成 null：%s", raw)
+	}
+}
+
+// ---------- 手动录入 ----------
+
+func TestManualVisitCreatesPlaceAndIsIdempotent(t *testing.T) {
+	s := newSvc(t)
+	ctx := context.Background()
+	arr := time.Date(2026, 10, 26, 10, 0, 0, 0, time.UTC).Unix()
+	dep := arr + 3600
+
+	res, err := s.CreateVisit(ctx, ManualVisit{
+		PlaceName: "手动记的咖啡馆", ArrivedAt: arr, DepartedAt: &dep,
+		Activity: "咖啡", Note: "手写测试", Tags: []string{"测试"},
+		Lat: ptr(31.2), Lon: ptr(121.4), City: "上海",
+	})
+	if err != nil {
+		t.Fatalf("CreateVisit: %v", err)
+	}
+	if res.VisitID == 0 || res.PlaceID == 0 {
+		t.Fatalf("返回了空 id：%+v", res)
+	}
+	if !res.Created {
+		t.Error("地点是新建的，created_place 应为 true")
+	}
+	if countOf(t, s, "visits") != 1 || countOf(t, s, "places") != 1 {
+		t.Errorf("到访 %d 条、地点 %d 条，都应为 1", countOf(t, s, "visits"), countOf(t, s, "places"))
+	}
+	// 地点表的 GCJ-02 必须是换算后的值，不能直接把 WGS 抄过去：
+	// 抄过去地图上会偏几百米，而且很难从界面上看出来。
+	var pLat, pLatGCJ float64
+	if err := s.db.QueryRow(`SELECT lat, COALESCE(lat_gcj,0) FROM places WHERE id=?`, res.PlaceID).
+		Scan(&pLat, &pLatGCJ); err != nil {
+		t.Fatalf("读地点坐标: %v", err)
+	}
+	if pLatGCJ == 0 || pLatGCJ == pLat {
+		t.Errorf("地点 GCJ 纬度 = %v（WGS = %v），应已换算", pLatGCJ, pLat)
+	}
+	// 完全相同的一条再来一次：去重键必须拦住，而不是插出第二条。
+	if _, err := s.CreateVisit(ctx, ManualVisit{
+		PlaceName: "手动记的咖啡馆", ArrivedAt: arr, DepartedAt: &dep,
+		Activity: "咖啡", Note: "手写测试", Tags: []string{"测试"},
+		Lat: ptr(31.2), Lon: ptr(121.4), City: "上海",
+	}); err == nil {
+		t.Fatal("重复写入应报错，实际通过了")
+	} else if !errors.As(err, new(*UserError)) {
+		t.Errorf("重复写入应返回 UserError（可回显给用户），实际 %T", err)
+	}
+}
+
+func TestManualVisitUpdateAndDelete(t *testing.T) {
+	s := newSvc(t)
+	ctx := context.Background()
+	arr := time.Date(2026, 10, 26, 10, 0, 0, 0, time.UTC).Unix()
+	res, err := s.CreateVisit(ctx, ManualVisit{PlaceName: "甲地点", ArrivedAt: arr})
+	if err != nil {
+		t.Fatalf("CreateVisit: %v", err)
+	}
+	note := "改过的备注"
+	tags := []string{"甲"}
+	if err := s.UpdateVisit(ctx, res.VisitID, VisitPatch{Note: &note, Tags: &tags}); err != nil {
+		t.Fatalf("UpdateVisit: %v", err)
+	}
+	var got string
+	if err := s.db.QueryRow(`SELECT COALESCE(note,'') FROM visits WHERE id=?`, res.VisitID).
+		Scan(&got); err != nil {
+		t.Fatalf("读备注: %v", err)
+	}
+	if got != note {
+		t.Errorf("备注 = %q，应为 %q", got, note)
+	}
+	// 离开时间早于抵达：必须拒绝而不是写进库。
+	bad := arr - 10
+	if err := s.UpdateVisit(ctx, res.VisitID, VisitPatch{DepartedAt: &bad}); err == nil {
+		t.Error("离开早于抵达应报错")
+	}
+	if err := s.DeleteVisit(ctx, res.VisitID); err != nil {
+		t.Fatalf("DeleteVisit: %v", err)
+	}
+	if countOf(t, s, "visits") != 0 {
+		t.Error("删除后到访表应为空")
+	}
+	// 手录时建的地点跟着走：否则地点库里会积下「0 次到访」的空壳。
+	if n := countOf(t, s, "places"); n != 0 {
+		t.Errorf("删除唯一到访后，手录地点应一并清掉，实际还剩 %d 个", n)
+	}
+	if err := s.DeleteVisit(ctx, res.VisitID); !errors.Is(err, ErrBatchNotFound) {
+		t.Errorf("删不存在的到访应返回 ErrBatchNotFound，实际 %v", err)
 	}
 }

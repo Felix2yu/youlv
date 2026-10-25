@@ -1,19 +1,25 @@
 package csvin
 
 import (
+	"math"
 	"regexp"
 	"strconv"
 	"strings"
 )
 
 // ParseFloat 解析浮点数，空串与非法值返回 (0, false)。
+//
+// NaN 与 Inf 也算非法：strconv 会接受 "NaN"/"Inf"，而它们一旦进了管线就
+// 到处「隐身」——范围判断（lat < -90）对 NaN 全为假，于是 NaN 顺利入库；
+// 最后在写暂存 JSON 时 json 编码器报 unsupported value，整次预检以一句
+// 没有行号的错误收场。在这里挡掉，才是能定位到行的失败。
 func ParseFloat(s string) (float64, bool) {
 	s = strings.TrimSpace(s)
 	if s == "" {
 		return 0, false
 	}
 	v, err := strconv.ParseFloat(s, 64)
-	if err != nil {
+	if err != nil || math.IsNaN(v) || math.IsInf(v, 0) {
 		return 0, false
 	}
 	return v, true

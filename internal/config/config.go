@@ -18,6 +18,10 @@ type Config struct {
 	TZ      *time.Location
 	Dev     bool // true 时前端回退读磁盘 web/dist
 	WebDir  string
+	// Token 非空时，除 /api/health 外的所有接口都要带上它。
+	// 留空表示不鉴权（默认，与 1.x 行为一致）——自托管在可信内网是合理的，
+	// 但一旦端口暴露到公网就是「任何人都能清空你的轨迹」，所以启动日志会明确说出来。
+	Token   string
 	Version string
 }
 
@@ -35,6 +39,7 @@ func Resolve() (*Config, error) {
 		TZName:  getenv("YOULV_TZ", DefaultTZ),
 		Dev:     getenv("YOULV_DEV", "") == "1",
 		WebDir:  getenv("YOULV_WEB_DIR", ""),
+		Token:   getenv("YOULV_TOKEN", ""),
 	}
 	c.DBPath = getenv("YOULV_DB", filepath.Join(c.DataDir, "youlv.db"))
 

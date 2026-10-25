@@ -68,6 +68,17 @@ func main() {
 	if n := imp.Cleanup(7 * 24 * time.Hour); n > 0 {
 		log.Printf("[import] 清理了 %d 个过期暂存目录", n)
 	}
+	// 只在启动时清一次是不够的：这是个常驻服务，连续跑几个月也不会重启，
+	// 过期暂存就一直堆着。每天再扫一次。
+	go func() {
+		t := time.NewTicker(24 * time.Hour)
+		defer t.Stop()
+		for range t.C {
+			if n := imp.Cleanup(7 * 24 * time.Hour); n > 0 {
+				log.Printf("[import] 定期清理了 %d 个过期暂存目录", n)
+			}
+		}
+	}()
 
 	st := store.New(conn, cfg.TZ)
 	// 存量活动可能没有颜色（早期批次），启动时补一次；失败不致命，
@@ -78,13 +89,21 @@ func main() {
 		log.Printf("[activity] 给 %d 个活动补了颜色", n)
 	}
 
-	srv := api.New(st, imp, version)
+	// 没有配置访问令牌时，所有接口（含清空数据）对能连上端口的人开放。
+	// 这是刻意保留的默认行为，但必须在日志里点明，别让人以为有防护。
+	if cfg.Token == "" {
+		log.Print("注意：未设置 YOULV_TOKEN，接口不做任何鉴权——请勿直接暴露到公网")
+	}
+	srv := api.New(st, imp, version, cfg.Token)
 
 	httpSrv := &http.Server{
 		Addr:         cfg.Addr,
 		Handler:      srv,
 		ReadTimeout:  120 * time.Second, // 导入整批要写 1.3 万行，读超时不能太短
 		WriteTimeout: 120 * time.Second,
+		// 只设 Read/Write 超时挡不住慢速攻击：连接可以先不读不写地挂着。
+		ReadHeaderTimeout: 30 * time.Second,
+		IdleTimeout:       120 * time.Second,
 	}
 	if *addr != config.DefaultAddr {
 		httpSrv.Addr = *addr

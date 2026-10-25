@@ -15,6 +15,8 @@ import (
 	"strings"
 	"unicode/utf8"
 
+	"golang.org/x/text/encoding/simplifiedchinese"
+	"golang.org/x/text/transform"
 	"golang.org/x/text/unicode/norm"
 )
 
@@ -45,13 +47,16 @@ func (k Kind) Label() string {
 
 // File 是一个已解码的源文件。
 type File struct {
-	Kind    Kind
-	Name    string
-	Size    int64
-	Sha256  string
-	Header  []string   // 原始表头（未归一化，用于回显）
-	Records [][]string // 数据行，已按表头宽度补齐/截断
-	LineOf  []int      // Records[i] 在原始文件中的物理行号（1-based，含表头）
+	Kind Kind
+	Name string
+	Size int64
+	// Encoding 记录这份文件实际用的编码（"utf-8" 或 "gb18030"），
+	// 便于在预检结果里说明「已按 GBK 解码」。
+	Encoding string
+	Sha256   string
+	Header   []string   // 原始表头（未归一化，用于回显）
+	Records  [][]string // 数据行，已按表头宽度补齐/截断
+	LineOf   []int      // Records[i] 在原始文件中的物理行号（1-based，含表头）
 }
 
 // Issue 是解码/校验阶段发现的问题。
@@ -87,17 +92,57 @@ var (
 	ErrNoHeader  = errors.New("文件没有表头")
 )
 
+// decodeBytes 保证返回 UTF-8。GB18030 是 GBK 的超集，覆盖所有常见中文场景。
+func decodeBytes(raw []byte) ([]byte, string) {
+	if utf8.Valid(raw) {
+		return raw, "utf-8"
+	}
+	out, _, err := transform.Bytes(simplifiedchinese.GB18030.NewDecoder(), raw)
+	if err != nil || bytes.ContainsRune(out, utf8.RuneError) {
+		// 解不出来就按原样走：后面 NFKC 归一会把非法字节换成 U+FFFD，
+		// 至少还能报出「表头无法识别」而不是直接崩。
+		return raw, "unknown"
+	}
+	return out, "gb18030"
+}
+
+// sniffDelimiter 按首行里 , ; \t 的出现次数挑分隔符，默认逗号。
+func sniffDelimiter(raw []byte) rune {
+	line := raw
+	if i := bytes.IndexAny(raw, "\r\n"); i >= 0 {
+		line = raw[:i]
+	}
+	best, bestN := ',', bytes.Count(line, []byte(","))
+	for _, c := range []rune{';', '\t', '|'} {
+		if n := bytes.Count(line, []byte(string(c))); n > bestN {
+			best, bestN = c, n
+		}
+	}
+	return best
+}
+
 // Decode 读取一个 CSV 文件。它不判断类型（那是 Detect 的事），
 // 只负责把字节变成规范化的行，并为每行记录真实物理行号。
 func Decode(name string, r io.Reader) (*File, []Issue, error) {
-	br := bufio.NewReader(r)
-
+	// 整份读进来：编码探测与分隔符嗅探都要先看一眼全文，
+	// 而且哈希与文件大小也在这里顺手算了。
+	raw, err := io.ReadAll(r)
+	if err != nil {
+		return nil, nil, fmt.Errorf("读取文件失败: %w", err)
+	}
+	if len(bytes.TrimSpace(raw)) == 0 {
+		return nil, nil, ErrEmptyFile
+	}
 	// 剥掉 UTF-8 BOM。Rond 导出的四份文件都带 BOM，不剥掉第一个列名会
 	// 变成 "\ufeff日期"，导致按名寻址全线失效。
-	if bom, err := br.Peek(3); err == nil && len(bom) == 3 &&
-		bom[0] == 0xEF && bom[1] == 0xBB && bom[2] == 0xBF {
-		_, _ = br.Discard(3)
-	}
+	raw = bytes.TrimPrefix(raw, []byte{0xEF, 0xBB, 0xBF})
+
+	// 不是合法 UTF-8 就按 GB18030 试一遍。中文用户从 Excel 另存的 CSV
+	// 常常是 GBK，从前这种文件会一路走到「无法自动确定类型（0%）」——
+	// 表头全是乱码，用户看不出是编码问题。
+	raw, encNote := decodeBytes(raw)
+
+	br := bufio.NewReader(bytes.NewReader(raw))
 
 	h := sha256.New()
 	var buf bytes.Buffer
@@ -105,6 +150,9 @@ func Decode(name string, r io.Reader) (*File, []Issue, error) {
 	rd.FieldsPerRecord = -1 // 字段数不齐不报错，交给下面的补齐逻辑
 	rd.LazyQuotes = true    // 中文文本里可能有裸引号
 	rd.TrimLeadingSpace = true
+	// 分隔符嗅探：分号（欧洲 Excel）与制表符（TSV）都会被默认当成单列，
+	// 然后落到「无法自动确定类型」。按首行出现次数挑一个。
+	rd.Comma = sniffDelimiter(raw)
 
 	header, err := rd.Read()
 	if err != nil {
@@ -118,6 +166,7 @@ func Decode(name string, r io.Reader) (*File, []Issue, error) {
 	}
 
 	f := &File{Name: name, Header: sanitizeAll(header)}
+	f.Encoding = encNote
 	width := len(f.Header)
 	if width == 0 {
 		return nil, nil, ErrNoHeader

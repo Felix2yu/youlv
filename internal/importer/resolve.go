@@ -197,9 +197,25 @@ func (r *PlaceResolver) ResolveVisit(name string, lat, lon float64, allowCreate 
 		}
 	}
 	if best.c == nil {
-		// 同名候选全是无坐标桩：退化为名字唯一命中。
+		// 同名候选全是无坐标桩：退化为名字命中。
+		//
+		// 取哪个候选必须走确定性规则，不能用 cs[0]（插入序会随导入顺序变，
+		// 重导一次就可能绑到另一家分店）；并且必须发重名告警——这条路径
+		// 拿不到「同一时刻人在哪」的锚点，本来就是猜的。
 		best.c = cs[0]
+		for _, c := range cs[1:] {
+			if betterCandidate(c, best.c) {
+				best.c = c
+			}
+		}
 		best.d = 0
+		if len(cs) > 1 {
+			issues = append(issues, csvin.Issue{
+				Severity: csvin.SevWarn, Code: "WARN_NAME_AMBIGUOUS", Field: "place_id",
+				Value: name, Message: fmt.Sprintf("「%s」有 %d 个同名地点且都没有坐标，按稳定键挑了一个", name, len(cs)),
+				Hint: "若绑错了，先在地点记录里补上坐标再重新导入",
+			})
+		}
 	}
 
 	res := ResolveResult{PlaceKey: best.c.Key, Method: "nearest", DistM: best.d}

@@ -4,11 +4,15 @@
 package api
 
 import (
+	"crypto/subtle"
 	"encoding/json"
+	"errors"
 	"log"
+	"math"
 	"net/http"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/Felix2yu/youlv/internal/importer"
 	"github.com/Felix2yu/youlv/internal/store"
@@ -24,14 +28,56 @@ type Server struct {
 	version string
 }
 
-// New 构造路由表。
-func New(st *store.Store, imp *importer.Service, version string) *Server {
+// New 构造路由表。token 非空时开启接口鉴权（见 tokenGate）。
+func New(st *store.Store, imp *importer.Service, version string, token string) *Server {
 	s := &Server{st: st, imp: imp, mux: http.NewServeMux(), version: version}
 	s.routes()
 	// 未匹配 /api/ 的路径一律回前端（SPA 深链由前端路由接管）。
 	s.mux.Handle("/", web.Handler())
-	s.root = s.recoverer(s.mux)
+	s.root = s.recoverer(tokenGate(token, s.mux))
 	return s
+}
+
+// tokenGate 是可选的访问令牌校验。
+//
+// 没有配置 YOULV_TOKEN 时完全不设防：自托管单人应用跑在可信内网是合理选择，
+// 但「任何人都能 POST /api/imports/purge 清空全部数据」这个事实必须被说出来，
+// 所以 main 在启动日志里会写明当前是哪种状态。
+//
+// 校验顺序：Authorization: Bearer <token> → X-Auth-Token → ?token=。
+// 留 query 这一路是因为 CSV 导出是浏览器直接下载，<a href> 带不上请求头。
+func tokenGate(token string, next http.Handler) http.Handler {
+	if token == "" {
+		return next
+	}
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if !strings.HasPrefix(r.URL.Path, "/api/") || r.URL.Path == "/api/health" {
+			next.ServeHTTP(w, r)
+			return
+		}
+		if subtleCompare(bearerToken(r), token) || subtleCompare(r.URL.Query().Get("token"), token) {
+			next.ServeHTTP(w, r)
+			return
+		}
+		writeErr(w, http.StatusUnauthorized, "缺少或无效的访问令牌")
+	})
+}
+
+func bearerToken(r *http.Request) string {
+	if v := r.Header.Get("X-Auth-Token"); v != "" {
+		return v
+	}
+	const prefix = "Bearer "
+	h := r.Header.Get("Authorization")
+	if strings.HasPrefix(strings.ToLower(h), strings.ToLower(prefix)) {
+		return h[len(prefix):]
+	}
+	return ""
+}
+
+// subtleCompare 用常量时间比较，避免按字节逐位泄露令牌前缀。
+func subtleCompare(a, b string) bool {
+	return subtle.ConstantTimeCompare([]byte(a), []byte(b)) == 1
 }
 
 func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) { s.root.ServeHTTP(w, r) }
@@ -64,7 +110,16 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("GET /api/places/stats", h(s.placesStats))
 	s.mux.HandleFunc("GET /api/activities", h(s.activities))
 	s.mux.HandleFunc("GET /api/tags", h(s.tags))
+	s.mux.HandleFunc("GET /api/places/{id}", h(s.placeDetail))
+	s.mux.HandleFunc("GET /api/places/{id}/visits", h(s.placeVisits))
+	s.mux.HandleFunc("GET /api/trips", h(s.trips))
 	s.mux.HandleFunc("GET /api/visits/{id}", h(s.visitDetail))
+	// 手动录入：写侧仍在 importer，API 只做参数校验与转发。
+	s.mux.HandleFunc("POST /api/visits", h(s.visitCreate))
+	s.mux.HandleFunc("PATCH /api/visits/{id}", h(s.visitUpdate))
+	s.mux.HandleFunc("DELETE /api/visits/{id}", h(s.visitDelete))
+	// 导出：自托管应用必须让用户把自己的数据拿走。
+	s.mux.HandleFunc("GET /api/export/visits.csv", h(s.exportVisitsCSV))
 
 	s.mux.HandleFunc("GET /api/settings", h(s.settings))
 	s.mux.HandleFunc("PUT /api/settings", h(s.settingsUpdate))
@@ -139,14 +194,99 @@ func queryInt(r *http.Request, key string, def int) int {
 	return n
 }
 
-func queryFloat(r *http.Request, key string, def float64) float64 {
+// ---------- 入参校验 ----------
+//
+// 这几个函数回答的是「参数合不合法」，而不是「参数有没有」。
+// 日期/月份/坐标系从前都是直接透传：日期只做字符串比较，于是
+// from=2024-1-1 会因为字典序（"2024-1-1" > "2024-12-01"）静默漏掉
+// 10~12 月的全部数据——查询结果错了却不报错，是最难发现的一类问题。
+
+// ErrBadParam 表示参数格式不对，调用方据此返回 400。
+var ErrBadParam = errors.New("参数不合法")
+
+// queryDate 校验 YYYY-MM-DD。缺零、越界月份一律拒绝。
+func queryDate(r *http.Request, key string) (string, bool) {
 	v := strings.TrimSpace(r.URL.Query().Get(key))
 	if v == "" {
-		return def
+		return "", false
+	}
+	if _, err := time.Parse("2006-01-02", v); err != nil {
+		return "", false
+	}
+	return v, true
+}
+
+// queryMonth 校验 YYYY-MM。
+func queryMonth(r *http.Request, key string) (string, bool) {
+	v := strings.TrimSpace(r.URL.Query().Get(key))
+	if v == "" {
+		return "", false
+	}
+	if _, err := time.Parse("2006-01", v); err != nil {
+		return "", false
+	}
+	return v, true
+}
+
+// queryFrame 只放行两种坐标系，未知值按默认处理（不报错，因为它是展示偏好）。
+func queryFrame(r *http.Request) string {
+	if f := strings.TrimSpace(r.URL.Query().Get("frame")); f == "gcj02" {
+		return "gcj02"
+	}
+	return "wgs84"
+}
+
+// queryBBoxFloat 读一个经纬度边界值。NaN / Inf 也要挡：strconv 会接受
+// "NaN"，它们穿过 SQL 不报错，只是让 BETWEEN 恒假，结果就是「地图空白」。
+func queryBBoxFloat(r *http.Request, key string, def, min, max float64) (float64, bool) {
+	v := strings.TrimSpace(r.URL.Query().Get(key))
+	if v == "" {
+		return def, true
 	}
 	f, err := strconv.ParseFloat(v, 64)
-	if err != nil {
+	if err != nil || math.IsNaN(f) || math.IsInf(f, 0) || f < min || f > max {
+		return 0, false
+	}
+	return f, true
+}
+
+// maxPageSize 是任意列表端点单页的上限。
+const maxPageSize = 1000
+
+// queryBool 按 1/0/true/false/yes/no/on/off 判读布尔值，与设置项的 kvBool
+// 保持同一套语义。缺失时返回 def。
+func queryBool(r *http.Request, key string, def bool) bool {
+	v := strings.ToLower(strings.TrimSpace(r.URL.Query().Get(key)))
+	switch v {
+	case "":
+		return def
+	case "1", "true", "yes", "on":
+		return true
+	case "0", "false", "no", "off":
+		return false
+	}
+	return def
+}
+
+// queryLimit 把分页大小钳到 [1, max]。
+//
+// SQLite 里 LIMIT -1 表示「不限制」，不钳制的话 ?limit=-1 一次就能把整表拉回来。
+func queryLimit(r *http.Request, def, max int) int {
+	n := queryInt(r, "limit", def)
+	if n < 1 {
 		return def
 	}
-	return f
+	if n > max {
+		return max
+	}
+	return n
+}
+
+// queryOffset 把偏移量钳到不小于 0。
+func queryOffset(r *http.Request) int {
+	n := queryInt(r, "offset", 0)
+	if n < 0 {
+		return 0
+	}
+	return n
 }

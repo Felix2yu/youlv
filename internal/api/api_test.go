@@ -17,7 +17,31 @@ func newTestServer(t *testing.T) *Server {
 	t.Helper()
 	tz := time.FixedZone("Asia/Shanghai", 8*3600)
 	conn := testdb.New(t)
-	return New(store.New(conn, tz), importer.New(conn, t.TempDir(), tz), "test")
+	// 令牌留空：测试走的是不鉴权路径，鉴权本身另有用例覆盖。
+	return New(store.New(conn, tz), importer.New(conn, t.TempDir(), tz), "test", "")
+}
+
+// 配了令牌之后，除探活外的接口必须带令牌才能访问。
+func TestTokenGateProtectsAPI(t *testing.T) {
+	tz := time.FixedZone("Asia/Shanghai", 8*3600)
+	conn := testdb.New(t)
+	s := New(store.New(conn, tz), importer.New(conn, t.TempDir(), tz), "test", "secret")
+
+	if w := do(t, s, "GET", "/api/meta", ""); w.Code != http.StatusUnauthorized {
+		t.Errorf("不带令牌：状态码 = %d，应为 401", w.Code)
+	}
+	// 探活必须始终免鉴权：健康检查与反向代理探测不能因为鉴权失败。
+	if w := do(t, s, "GET", "/api/health", ""); w.Code != http.StatusOK {
+		t.Errorf("探活：状态码 = %d，应为 200（探活不能受鉴权影响）", w.Code)
+	}
+
+	r := httptest.NewRequest("GET", "/api/meta", nil)
+	r.Header.Set("Authorization", "Bearer secret")
+	w := httptest.NewRecorder()
+	s.ServeHTTP(w, r)
+	if w.Code != http.StatusOK {
+		t.Errorf("带正确令牌：状态码 = %d，应为 200", w.Code)
+	}
 }
 
 // do 发起一次请求并返回 recorder。
@@ -171,8 +195,43 @@ func TestVisitDetailRejectsBadID(t *testing.T) {
 func TestDeleteImportBatchNotFound(t *testing.T) {
 	s := newTestServer(t)
 	w := do(t, s, "DELETE", "/api/imports/nope", "")
-	if w.Code != http.StatusBadRequest {
-		t.Fatalf("状态码 = %d，应为 400（批次不存在）", w.Code)
+	// 批次不存在是 404，不是 400：客户端要能和「参数写错」区分开。
+	if w.Code != http.StatusNotFound {
+		t.Fatalf("状态码 = %d，应为 404（批次不存在）", w.Code)
+	}
+}
+
+// 预检有阻断项时不能直接提交：前端禁用按钮只是提示，API 才是最后一道门。
+func TestCommitRejectsRolledBackBatch(t *testing.T) {
+	s := newTestServer(t)
+	w := do(t, s, "POST", "/api/imports/nope/commit", "")
+	if w.Code != http.StatusNotFound {
+		t.Fatalf("状态码 = %d，应为 404（批次不存在）", w.Code)
+	}
+}
+
+// 日期格式必须挡住：查询是按字符串比较的，2024-1-1 和 2024-12-01 在 SQL 里
+// 是两种排序结果，静默放过就是「查不到但不告诉你」。
+func TestTimelineRejectsMalformedDate(t *testing.T) {
+	s := newTestServer(t)
+	for _, q := range []string{"date=2024-1-1", "month=2024-13", "from=2024-1-1"} {
+		w := do(t, s, "GET", "/api/timeline/"+map[string]string{
+			"date=2024-1-1": "day", "month=2024-13": "month", "from=2024-1-1": "range",
+		}[q]+"?"+q, "")
+		if w.Code != http.StatusBadRequest {
+			t.Errorf("%s：状态码 = %d，应为 400", q, w.Code)
+		}
+	}
+}
+
+// 分页参数要钳住：SQLite 里 LIMIT -1 表示不限制，不挡就是整表拉回来。
+func TestMapPointsRejectsBadBBox(t *testing.T) {
+	s := newTestServer(t)
+	for _, q := range []string{"west=200", "south=-200", "west=10&east=1", "west=NaN"} {
+		w := do(t, s, "GET", "/api/map/points?"+q, "")
+		if w.Code != http.StatusBadRequest {
+			t.Errorf("%s：状态码 = %d，应为 400", q, w.Code)
+		}
 	}
 }
 

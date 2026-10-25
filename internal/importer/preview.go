@@ -85,7 +85,8 @@ func (s *Service) Preview(ctx context.Context, files []UploadedFile, opt Options
 			Kind: f.Kind, Label: f.Kind.Label(), File: uf.Name,
 			SHA256: f.Sha256, Rows: len(f.Records),
 			Detected: string(d.Kind), Confidence: d.Confidence,
-			Missing: d.MissingReq, Extra: d.Extra,
+			Missing: d.MissingReq, MissingOpt: d.MissingOpt,
+			Encoding: f.Encoding, Extra: d.Extra,
 		}
 		if len(d.MissingReq) > 0 {
 			rep.Blocking = append(rep.Blocking,
@@ -95,12 +96,16 @@ func (s *Service) Preview(ctx context.Context, files []UploadedFile, opt Options
 			rep.Blocking = append(rep.Blocking,
 				fmt.Sprintf("%s 无法自动确定类型（置信度 %.0f%%），请手动指定", uf.Name, d.Confidence*100))
 		}
+		if f.Encoding == "gb18030" {
+			rep.Highlights = append(rep.Highlights,
+				fmt.Sprintf("%s 不是 UTF-8，已按 GBK 解码（建议导出时选 UTF-8）", uf.Name))
+		}
 		rep.Files = append(rep.Files, st)
 		decoded = append(decoded, f)
 		detects = append(detects, d)
 	}
 	if len(decoded) == 0 {
-		return nil, fmt.Errorf("没有可解析的文件")
+		return nil, UserErrf("没有可解析的文件：%s", strings.Join(rep.Blocking, "；"))
 	}
 
 	// --- 2. 载入库内已有的地点，供重名消歧与去重 ---
@@ -241,7 +246,7 @@ func (s *Service) Preview(ctx context.Context, files []UploadedFile, opt Options
 		rep.Totals.Inserted += rep.Files[i].Inserted
 		rep.Totals.Skipped += rep.Files[i].Skipped
 	}
-	if err := s.savePreview(ctx, batchNo, rep, files, decoded, detects); err != nil {
+	if err := s.savePreview(ctx, batchNo, rep, decoded, detects); err != nil {
 		return nil, err
 	}
 	rep.DurationMS = time.Since(started).Milliseconds()
@@ -608,7 +613,30 @@ func (s *Service) parseVisits(f *csvin.File, d *csvin.DetectResult, rep *Report,
 
 		lat, okLat := csvin.ParseFloat(ci.Get(rec, "纬度"))
 		lon, okLon := csvin.ParseFloat(ci.Get(rec, "经度"))
-		if !okLat || !okLon {
+		// 到访的坐标以前完全不校验：解析失败静默置 (0,0)、越界值（如 999）
+		// 原样入库。前者让用户看不出坐标丢了，后者直接污染地图与距离计算。
+		switch {
+		case !okLat || !okLon:
+			if ci.Get(rec, "纬度") != "" || ci.Get(rec, "经度") != "" {
+				st.Warned++
+				rep = s.addIssue(rep, f.Kind, csvin.Issue{
+					Line: line, RowNo: rowNo, Column: "纬度/经度", Field: "lat/lon",
+					Value:    ci.Get(rec, "纬度") + "," + ci.Get(rec, "经度"),
+					Severity: csvin.SevWarn, Code: "ERR_COORD_PARSE",
+					Message: "纬度或经度无法解析，按无坐标处理",
+					Hint:    "应为十进制度，例如 31.299758；这条到访不会出现在地图上",
+				})
+			}
+			lat, lon = 0, 0
+		case lat < -90 || lat > 90 || lon < -180 || lon > 180:
+			st.Warned++
+			rep = s.addIssue(rep, f.Kind, csvin.Issue{
+				Line: line, RowNo: rowNo, Column: "纬度/经度", Field: "lat/lon",
+				Value:    fmt.Sprintf("%.6f,%.6f", lat, lon),
+				Severity: csvin.SevWarn, Code: "WARN_COORD_RANGE",
+				Message: "坐标超出合法范围，按无坐标处理",
+				Hint:    "纬度应在 -90~90，经度在 -180~180",
+			})
 			lat, lon = 0, 0
 		}
 		lat, lon = geo.Quantize(lat, 6), geo.Quantize(lon, 6)
@@ -1016,8 +1044,13 @@ func placeholders(n int) string {
 
 // ---------- 审计落库 ----------
 
+// savePreview 把预检结果写进审计表。
+//
+// 文件名/大小/校验和一律取自 decoded（csvin.File 自带），**不再按下标回查
+// 上传列表**：解码失败的文件不会进 decoded，一旦按下标配对，审计行就会与
+// 真实文件错位（曾出现「空文件.csv」带着地点文件的 sha256 与行数）。
 func (s *Service) savePreview(ctx context.Context, batchNo string, rep *Report,
-	files []UploadedFile, decoded []*csvin.File, detects []*csvin.DetectResult) error {
+	decoded []*csvin.File, detects []*csvin.DetectResult) error {
 	optJSON, _ := json.Marshal(rep.Options)
 	statsJSON, _ := json.Marshal(rep.Totals)
 	reportJSON, _ := json.Marshal(rep)
@@ -1039,19 +1072,19 @@ func (s *Service) savePreview(ctx context.Context, batchNo string, rep *Report,
 		return err
 	}
 
-	for i, uf := range files {
-		if i >= len(decoded) || i >= len(detects) {
+	for i, f := range decoded {
+		if i >= len(detects) {
 			break
 		}
-		hdr, _ := json.Marshal(decoded[i].Header)
+		hdr, _ := json.Marshal(f.Header)
 		mapJSON, _ := json.Marshal(detects[i].Mapping)
 		if _, err := tx.ExecContext(ctx,
 			`INSERT INTO imports_files(import_id, kind, file_name, file_size, sha256,
 				header_json, mapping_json, rows_total, staged_path)
 			 VALUES(?,?,?,?,?,?,?,?,?)`,
-			importID, string(decoded[i].Kind), uf.Name, uf.Size, decoded[i].Sha256,
-			string(hdr), string(mapJSON), len(decoded[i].Records),
-			filepath.Join(s.stageDir(batchNo), stageFileName(decoded[i].Kind))); err != nil {
+			importID, string(f.Kind), f.Name, f.Size, f.Sha256,
+			string(hdr), string(mapJSON), len(f.Records),
+			filepath.Join(s.stageDir(batchNo), stageFileName(f.Kind))); err != nil {
 			return err
 		}
 	}
