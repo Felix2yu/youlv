@@ -11,6 +11,7 @@ import type {
   ModeStat,
   Overview,
   Place,
+  PlaceDetail,
   PlaceStats,
   Report,
   RollbackResult,
@@ -19,11 +20,43 @@ import type {
   BBox,
   Tag,
   TilesConfig,
+  Trip,
   Visit,
   VisitDetail,
   Weather,
   ActivityStat
 } from './types';
+
+// 访问令牌存在本地：服务端设了 YOULV_TOKEN 时，前端必须带上它才能取数。
+// 存 localStorage 而不是让用户每次输，是因为这是单人自托管应用，
+// 「打开就能用」比「每次开页面输一次令牌」重要。
+const TOKEN_KEY = 'youlv.token';
+
+export function getToken(): string {
+  try {
+    return localStorage.getItem(TOKEN_KEY) ?? '';
+  } catch {
+    return '';
+  }
+}
+
+export function setToken(t: string): void {
+  try {
+    if (t) localStorage.setItem(TOKEN_KEY, t);
+    else localStorage.removeItem(TOKEN_KEY);
+  } catch {
+    // 隐私模式下写不了，本次会话仍可用内存里的值，忽略
+  }
+}
+
+function authHeaders(extra?: HeadersInit): Record<string, string> {
+  const token = getToken();
+  return {
+    accept: 'application/json',
+    ...(token ? { 'X-Auth-Token': token } : {}),
+    ...((extra as Record<string, string> | undefined) ?? {})
+  };
+}
 
 // 后端对错误的响应统一是 {"error": "..."}。
 export class ApiError extends Error {
@@ -37,10 +70,16 @@ export class ApiError extends Error {
 }
 
 async function json<T>(path: string, init?: RequestInit): Promise<T> {
-  const res = await fetch(path, {
-    ...init,
-    headers: { accept: 'application/json', ...(init?.headers ?? {}) }
-  });
+  let res: Response;
+  try {
+    res = await fetch(path, { ...init, headers: authHeaders(init?.headers) });
+  } catch (e) {
+    // fetch 只在网络层失败时 reject（服务没起、断网、被中断），此时抛的是
+    // 浏览器原生的 TypeError，英文文案（"Failed to fetch"）会直接出现在中文
+    // 界面上。这里统一翻掉。
+    if (e instanceof DOMException && e.name === 'AbortError') throw e;
+    throw new Error('连不上服务，检查一下它还跑着吗');
+  }
   const text = await res.text();
   let body: unknown = null;
   if (text) {
@@ -51,6 +90,10 @@ async function json<T>(path: string, init?: RequestInit): Promise<T> {
     }
   }
   if (!res.ok) {
+    // 401 单独翻译：用户看到「缺少或无效的访问令牌」得知道去哪儿补。
+    if (res.status === 401) {
+      throw new ApiError('服务端要求访问令牌：请到「设置」里填一下', 401);
+    }
     const msg =
       body && typeof body === 'object' && 'error' in body
         ? String((body as { error: unknown }).error)
@@ -103,6 +146,54 @@ export const api = {
       `/api/places${qs({ ...p, has_coord: p.has_coord ? '1' : '' })}`
     ),
 
+  place: (id: number, frame = 'wgs84') => json<PlaceDetail>(`/api/places/${id}${qs({ frame })}`),
+
+  placeVisits: (id: number, limit = 50, frame = 'wgs84') =>
+    json<{ items: Visit[] }>(`/api/places/${id}/visits${qs({ limit, frame })}`).then(
+      (r) => r.items
+    ),
+
+  trips: (p: { from?: string; to?: string; mode?: string; limit?: number } = {}) =>
+    json<{ items: Trip[]; total: number }>(`/api/trips${qs({ ...p })}`),
+
+  // 导出走浏览器直接下载，<a href> 带不上请求头，令牌只能放 query。
+  exportVisitsUrl: (p: { from?: string; to?: string } = {}) =>
+    `/api/export/visits.csv${qs({ ...p, token: getToken() })}`,
+
+  // 手动录入：不经过 CSV，直接记一条到访。
+  createVisit: (b: {
+    place_name?: string;
+    place_id?: number;
+    arrived_at: number;
+    departed_at?: number;
+    activity?: string;
+    note?: string;
+    tags?: string[];
+    lat?: number;
+    lon?: number;
+    city?: string;
+  }) =>
+    json<{ visit_id: number; place_id: number; created_place: boolean }>('/api/visits', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(b)
+    }),
+
+  updateVisit: (
+    id: number,
+    b: { note?: string; activity?: string; tags?: string[]; departed_at?: number }
+  ) =>
+    json<{ ok: boolean }>(`/api/visits/${id}`, {
+      method: 'PATCH',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(b)
+    }),
+
+  deleteVisit: (id: number) =>
+    fetch(`/api/visits/${id}`, { method: 'DELETE', headers: authHeaders() }).then((r) => {
+      if (!r.ok) throw new ApiError('删除失败', r.status);
+    }),
+
   activities: () => json<{ items: Activity[] }>('/api/activities').then((r) => r.items),
 
   overview: () => json<Overview>('/api/stats/overview'),
@@ -144,11 +235,14 @@ export const api = {
     return json<Report>('/api/imports/preview', { method: 'POST', body: fd, signal });
   },
 
-  commit: (batchNo: string, d: Decisions = {}) =>
+  // signal 让长导入可以中途取消：写入一万多行要一两秒到几十秒，
+  // 没有取消路径，用户只能干等着或刷新页面。
+  commit: (batchNo: string, d: Decisions = {}, signal?: AbortSignal) =>
     json<Report>(`/api/imports/${encodeURIComponent(batchNo)}/commit`, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify(d)
+      body: JSON.stringify(d),
+      signal
     }),
 
   rollback: (batchNo: string) =>
@@ -196,7 +290,10 @@ export const api = {
     }),
 
   deleteImport: async (batchNo: string) => {
-    const res = await fetch(`/api/imports/${encodeURIComponent(batchNo)}`, { method: 'DELETE' });
+    const res = await fetch(`/api/imports/${encodeURIComponent(batchNo)}`, {
+      method: 'DELETE',
+      headers: authHeaders()
+    });
     if (!res.ok) {
       const body = await res.text();
       let msg = `删除失败（${res.status}）`;

@@ -67,6 +67,47 @@ export interface Place {
   last_visit_at?: number;
 }
 
+/** 地点详情：地点本身 + 最近到访 + 累计停留。 */
+export interface PlaceDetail extends Place {
+  recent: Visit[];
+  duration_s: number;
+}
+
+/** 一段交通。时间轴里「怎么去的」来自这里。 */
+export interface Trip {
+  id: number;
+  mode: string;
+  mode_raw: string;
+  from_at: number;
+  to_at: number;
+  from_local: string;
+  to_local: string;
+  local_date: string;
+  duration_s: number;
+  from_place: string;
+  to_place: string;
+  from_lat?: number;
+  from_lon?: number;
+  to_lat?: number;
+  to_lon?: number;
+  from_place_id: number;
+  to_place_id: number;
+}
+
+/** 交通方式的中文说法：库里存的是英文枚举，界面上不能裸着。 */
+export const MODE_CN: Record<string, string> = {
+  walk: '步行',
+  bike: '骑车',
+  bus: '公交',
+  metro: '地铁',
+  train: '火车',
+  car: '驾车',
+  taxi: '出租车',
+  plane: '飞机',
+  ferry: '轮渡',
+  other: '其他'
+};
+
 export interface Activity {
   name: string;
   color: string;
@@ -196,6 +237,10 @@ export interface FileStat {
   detected: string;
   confidence: number;
   missing?: string[];
+  /** 认识但没提供的列：不阻断导入，但对应数据会静默变空，所以要回显 */
+  missing_opt?: string[];
+  /** 这份文件实际按哪种编码解码：utf-8 / gb18030 / unknown */
+  encoding?: string;
   extra?: string[];
 }
 

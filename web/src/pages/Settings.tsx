@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { api } from '../lib/api';
+import { api, getToken, setToken } from '../lib/api';
 import { useAsync, useTheme, type Theme } from '../lib/hooks';
 import { num, ymd } from '../lib/format';
 import type { ImportRow, Meta, Report, Settings } from '../lib/types';
@@ -98,12 +98,27 @@ export default function Settings({
           </div>
         ) : null}
         <p className="mt-3 text-[12px] leading-relaxed text-muted">
-          数据库是单个 SQLite 文件。备份请用命令行导出，它会在不锁库的情况下生成一份完整副本：
+          导数不必走命令行：直接下载一份 CSV（含 WGS-84 与 GCJ-02 两套坐标）——
+        </p>
+        <div className="mt-1 flex flex-wrap items-center gap-2">
+          <a
+            href={api.exportVisitsUrl()}
+            download
+            className="inline-flex h-7 items-center rounded-md border border-line-strong bg-surface px-2 text-[12px] font-medium text-ink hover:bg-raised"
+          >
+            导出全部到访
+          </a>
+          <span className="text-[11px] text-faint">最多 5 万条</span>
+        </div>
+        <p className="mt-3 text-[12px] leading-relaxed text-muted">
+          整库备份走命令行，它会在不锁库的情况下生成一份完整副本：
         </p>
         <pre className="mt-1 overflow-x-auto rounded border border-line bg-raised px-2 py-1.5 text-[11px] text-muted">
           youlv backup &gt; youlv-备份.db
         </pre>
       </Card>
+
+      <AccessToken />
 
       <Card>
         <SectionTitle aside={<span className="tnum">{list.data?.length ?? 0} 批</span>}>
@@ -401,5 +416,61 @@ function KV({ k, v }: { k: string; v: string }) {
       <dt className="text-muted">{k}</dt>
       <dd className="tnum">{v}</dd>
     </div>
+  );
+}
+
+/**
+ * 访问令牌。
+ *
+ * 服务端设了 YOULV_TOKEN 之后，所有 /api/ 都要求带上它；前端把它存在本地，
+ * 每次请求附在 X-Auth-Token 里。没设令牌时这一栏留着也没坏处——
+ * 填了也只会被忽略，所以文案要说明「只在服务端开了鉴权时才需要」。
+ */
+function AccessToken() {
+  const [val, setVal] = useState(() => getToken());
+  const [saved, setSaved] = useState(false);
+
+  return (
+    <Card>
+      <SectionTitle>访问令牌</SectionTitle>
+      <p className="mb-2 text-[12px] leading-relaxed text-muted">
+        服务端启动时设了 <code className="text-ink">YOULV_TOKEN</code>{' '}
+        才需要填。令牌只保存在这台设备的浏览器里， 不会上传；填完刷新页面生效。
+      </p>
+      <div className="flex flex-wrap items-center gap-2">
+        <input
+          type="password"
+          value={val}
+          onChange={(e) => {
+            setVal(e.target.value);
+            setSaved(false);
+          }}
+          placeholder="未设置"
+          className="h-8 min-w-0 flex-1 rounded-md border border-line-strong bg-surface px-2 text-[13px] placeholder:text-faint"
+        />
+        <Button
+          variant="primary"
+          onClick={() => {
+            setToken(val.trim());
+            setSaved(true);
+          }}
+        >
+          保存
+        </Button>
+        <Button
+          variant="ghost"
+          onClick={() => {
+            setToken('');
+            setVal('');
+            setSaved(true);
+          }}
+        >
+          清除
+        </Button>
+      </div>
+      {saved ? (
+        <div className="mt-2 text-[12px] text-muted">已保存，刷新页面后按新令牌访问。</div>
+      ) : null}
+    </Card>
   );
 }

@@ -15,7 +15,13 @@ const STEPS: { n: Step; label: string }[] = [
   { n: 6, label: '结果' }
 ];
 
-export default function Import({ meta }: { meta: Meta | null }) {
+export default function Import({
+  meta,
+  onDataChanged
+}: {
+  meta: Meta | null;
+  onDataChanged?: () => void;
+}) {
   const [step, setStep] = useState<Step>(1);
   const [files, setFiles] = useState<File[]>([]);
   // null 表示「识别还没有结果」：可能正在上传，也可能识别请求失败了。
@@ -36,6 +42,8 @@ export default function Import({ meta }: { meta: Meta | null }) {
   // 拖放监听只挂一次，但要用到「当前这一步」和「最新的 onDetect」，故走 ref。
   const stepRef = useRef(step);
   const detectRef = useRef(onDetect);
+  // 写入过程中的中止器：导入大文件要一会儿，得给个出口。
+  const abortRef = useRef<AbortController | null>(null);
   // 每次渲染后同步最新值；在渲染期写 ref 会被 react-hooks 规则拦下。
   useEffect(() => {
     stepRef.current = step;
@@ -125,17 +133,27 @@ export default function Import({ meta }: { meta: Meta | null }) {
     // 先切到「执行中」这一步再发请求：导入 1 万多行要一两秒，
     // 让用户盯着裁决页的按钮等，是最容易被当成卡死的地方。
     setStep(5);
+    const ac = new AbortController();
+    abortRef.current = ac;
     try {
-      const rep = await api.commit(report.batch_no, {
-        weather_strategy: 'old',
-        weather_overrides: overrides
-      });
+      const rep = await api.commit(
+        report.batch_no,
+        { weather_strategy: 'old', weather_overrides: overrides },
+        ac.signal
+      );
       setCommitted(rep);
       setStep(6);
+      onDataChanged?.();
     } catch (e) {
+      if (e instanceof DOMException && e.name === 'AbortError') {
+        // 用户自己取消的不算错误，回到裁决页让他决定下一步。
+        setStep(4);
+        return;
+      }
       setError(e instanceof Error ? e.message : String(e));
       setStep(4);
     } finally {
+      abortRef.current = null;
       setBusy(false);
     }
   }
@@ -149,6 +167,7 @@ export default function Import({ meta }: { meta: Meta | null }) {
       setCommitted(null);
       setReport(null);
       setStep(1);
+      onDataChanged?.();
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     } finally {
@@ -309,6 +328,13 @@ export default function Import({ meta }: { meta: Meta | null }) {
               不会出现「地点进了、到访没进」的半截状态。
             </p>
             <p className="tnum text-[11px] text-faint">批次 {report.batch_no}</p>
+            <Button
+              variant="ghost"
+              onClick={() => abortRef.current?.abort()}
+              disabled={!abortRef.current}
+            >
+              取消导入
+            </Button>
           </div>
         </Card>
       ) : null}
@@ -371,7 +397,11 @@ function PreviewStep({
   return (
     <>
       <Card>
-        <SectionTitle aside={<span className="tnum">{report.duration_ms ?? 0} ms</span>}>
+        <SectionTitle
+          aside={
+            <span className="tnum">{report.duration_ms ? `${report.duration_ms} ms` : '—'}</span>
+          }
+        >
           预检结果
         </SectionTitle>
         <div className="mb-3 grid grid-cols-2 gap-2 sm:grid-cols-4">
@@ -397,7 +427,16 @@ function PreviewStep({
           <tbody className="tnum">
             {report.files.map((f) => (
               <tr key={f.file} className="border-b border-line last:border-0">
-                <td className="py-1">{f.label}</td>
+                <td className="py-1">
+                  {f.label}
+                  {/* 缺可选列不阻断导入，但对应数据会静默变空，
+                      不点出来用户会以为是自己数错了。 */}
+                  {f.missing_opt?.length ? (
+                    <span className="ml-1 text-[11px] text-faint">
+                      缺 {f.missing_opt.join('、')}
+                    </span>
+                  ) : null}
+                </td>
                 <td className="py-1 text-right">{f.rows}</td>
                 <td className="py-1 text-right">{f.ready}</td>
                 <td className="py-1 text-right">{f.dup_skip}</td>
@@ -448,6 +487,16 @@ function PreviewStep({
         </Card>
       ) : null}
 
+      {report.totals.ready === 0 && report.conflicts.length === 0 ? (
+        // 灰掉按钮不够：用户面对一个不可点的按钮，并不知道是「全重复了」
+        // 还是「出错了」。重复导入本来就该是 ready=0，这是正常结果，要讲明白。
+        <p className="rounded-lg border border-line bg-raised px-3 py-2 text-[12px] leading-relaxed text-muted">
+          这 {num(report.totals.dup_skip)} 行库里都已经有了，没有新数据要导入。
+          {report.totals.failed > 0
+            ? `另有 ${num(report.totals.failed)} 行无法导入，见下方问题明细。`
+            : '可以直接返回，也可以换一份导出文件再试。'}
+        </p>
+      ) : null}
       <div className="flex gap-2">
         <Button variant="ghost" onClick={onBack}>
           返回

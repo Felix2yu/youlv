@@ -1,9 +1,10 @@
 import { useMemo, useState } from 'react';
 import { api } from '../lib/api';
-import { useAsync } from '../lib/hooks';
+import { useAsync, useRoute } from '../lib/hooks';
 import { md, num } from '../lib/format';
 import type { Place, PlaceStats } from '../lib/types';
 import { Badge, Card, Empty, ErrorBox, SectionTitle, Spinner } from '../components/ui';
+import PlaceDrawer from '../components/PlaceDrawer';
 
 const SORTS = [
   ['visit_count', '到访次数'],
@@ -12,10 +13,12 @@ const SORTS = [
 ] as const;
 
 export default function Places() {
+  const { go } = useRoute();
   const [q, setQ] = useState('');
   const [sort, setSort] = useState<string>('visit_count');
   const [onlyCoord, setOnlyCoord] = useState(false);
   const [offset, setOffset] = useState(0);
+  const [placeId, setPlaceId] = useState<number | null>(null);
   const limit = 100;
 
   const res = useAsync(
@@ -87,7 +90,7 @@ export default function Places() {
           <>
             <ul>
               {(res.data?.items ?? []).map((p) => (
-                <PlaceRow key={p.id} p={p} />
+                <PlaceRow key={p.id} p={p} onOpen={(id) => setPlaceId(id)} />
               ))}
             </ul>
             <Pager
@@ -99,45 +102,56 @@ export default function Places() {
           </>
         )}
       </Card>
+
+      <PlaceDrawer
+        id={placeId}
+        onClose={() => setPlaceId(null)}
+        onOpenVisit={(_vid, date) => go('/timeline', { date, visit: _vid })}
+      />
     </div>
   );
 }
 
-function PlaceRow({ p }: { p: Place }) {
+function PlaceRow({ p, onOpen }: { p: Place; onOpen: (id: number) => void }) {
   const addr = useMemo(
     () => [p.city, p.district, p.street].filter(Boolean).join(' '),
     [p.city, p.district, p.street]
   );
   return (
-    <li className="flex items-center gap-2 border-b border-line px-3 py-2 last:border-0">
-      <div className="min-w-0 flex-1">
-        <div className="flex min-w-0 items-center gap-1.5">
-          <span className="truncate text-[13px] font-medium">{p.display_name}</span>
-          {p.is_stub ? (
-            <Badge tone="warn" title="这个地点只在到访/交通/天气里被提到，没有独立登记过坐标">
-              仅引用
-            </Badge>
-          ) : null}
+    <li className="border-b border-line last:border-0">
+      <button
+        onClick={() => onOpen(p.id)}
+        className="flex w-full items-center gap-2 px-3 py-2 text-left transition-colors hover:bg-raised"
+      >
+        <div className="min-w-0 flex-1">
+          <div className="flex min-w-0 items-center gap-1.5">
+            <span className="truncate text-[13px] font-medium">{p.display_name}</span>
+            {p.is_stub ? (
+              <Badge tone="warn" title="这个地点只在到访/交通/天气里被提到，没有独立登记过坐标">
+                仅引用
+              </Badge>
+            ) : null}
+          </div>
+          {addr ? <div className="truncate text-[11px] text-faint">{addr}</div> : null}
         </div>
-        {addr ? <div className="truncate text-[11px] text-faint">{addr}</div> : null}
-      </div>
-      <div className="shrink-0 text-right">
-        <div className="tnum text-[13px]">{p.visit_count} 次</div>
-        {p.last_visit_at ? (
-          <div className="tnum text-[11px] text-faint">{md(p.last_visit_at)}</div>
-        ) : (
-          <div className="text-[11px] text-faint">未到访</div>
-        )}
-      </div>
-      <div className="hidden w-24 shrink-0 text-right text-[11px] text-muted sm:block">
-        {p.lat != null ? (
-          <span className="tnum">
-            {p.lat.toFixed(4)}, {p.lon?.toFixed(4)}
-          </span>
-        ) : (
-          <span className="text-faint">无坐标</span>
-        )}
-      </div>
+        <div className="shrink-0 text-right">
+          <div className="tnum text-[13px]">{p.visit_count} 次</div>
+          {p.last_visit_at ? (
+            <div className="tnum text-[11px] text-faint">{md(p.last_visit_at)}</div>
+          ) : (
+            <div className="text-[11px] text-faint">未到访</div>
+          )}
+        </div>
+        <div className="hidden w-24 shrink-0 text-right text-[11px] text-muted sm:block">
+          {p.lat != null ? (
+            <span className="tnum">
+              {p.lat.toFixed(4)}, {p.lon?.toFixed(4)}
+            </span>
+          ) : (
+            <span className="text-faint">无坐标</span>
+          )}
+        </div>
+      </button>
     </li>
   );
 }

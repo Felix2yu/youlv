@@ -154,6 +154,17 @@ export default function App() {
           </nav>
         </header>
 
+        {/* 取不到 meta 时必须有话说：否则侧栏只剩「还没有数据」，
+            用户会以为库是空的，而不是令牌没填对。 */}
+        {meta.error ? (
+          <div className="flex items-center gap-2 border-b border-warn/40 bg-warn-soft px-3 py-1.5 text-[12px] text-warn">
+            <span className="min-w-0 flex-1 truncate">{meta.error}</span>
+            <button onClick={meta.reload} className="shrink-0 underline">
+              重试
+            </button>
+          </div>
+        ) : null}
+
         <main className="min-w-0 flex-1 px-3 py-3 sm:px-5 sm:py-4">
           {meta.loading ? (
             <div className="py-16">
@@ -185,11 +196,13 @@ function Router({
     case '/stats':
       return <Stats />;
     case '/import':
-      return <Import meta={meta} />;
+      // 导入写完/撤销完必须刷新侧栏计数：不刷新的话结果页写着「写入 N 条」，
+      // 回到时间轴侧栏还是旧数字，用户会怀疑到底导没导进去。
+      return <Import meta={meta} onDataChanged={metaReload} />;
     case '/settings':
       return <Settings meta={meta} onDataChanged={metaReload} />;
     case '/timeline':
     default:
-      return <Timeline />;
+      return <Timeline onDataChanged={metaReload} />;
   }
 }

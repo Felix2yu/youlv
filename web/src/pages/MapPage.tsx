@@ -152,9 +152,9 @@ function CanvasMap({
     );
 
   const onWheel = useCallback(
-    (e: React.WheelEvent<SVGSVGElement>) => {
+    (e: WheelEvent) => {
       e.preventDefault();
-      const r = e.currentTarget.getBoundingClientRect();
+      const r = (e.currentTarget as SVGSVGElement).getBoundingClientRect();
       const mx = e.clientX - r.left;
       const my = e.clientY - r.top;
       // 以鼠标为锚：缩放前后，光标下的那个墨卡托点必须落在同一像素上。
@@ -170,11 +170,45 @@ function CanvasMap({
     [view, size]
   );
 
+  // React 的 onWheel 是在根容器上以 passive 方式挂的，里面调 preventDefault
+  // 不生效（页面会跟着一起滚，控制台还刷警告）。缩放必须自己挂非被动监听。
+  const svgRef = useRef<SVGSVGElement>(null);
+  const wheelRef = useRef(onWheel);
+  useEffect(() => {
+    wheelRef.current = onWheel;
+  });
+  useEffect(() => {
+    const el = svgRef.current;
+    if (!el) return;
+    const h = (e: WheelEvent) => wheelRef.current(e);
+    el.addEventListener('wheel', h, { passive: false });
+    return () => el.removeEventListener('wheel', h);
+  }, []);
+
+  // 双指捏合：只处理单指针的话，移动端就没法缩放。
+  const pointers = useRef(new Map<number, { x: number; y: number }>());
+  const pinch = useRef<{ d: number; k: number; cx: number; cy: number } | null>(null);
+  const spread = () => {
+    const pts = [...pointers.current.values()];
+    if (pts.length < 2) return 0;
+    return Math.hypot(pts[0].x - pts[1].x, pts[0].y - pts[1].y);
+  };
+
+  const zoomBy = (factor: number) =>
+    setView((v) => ({ ...v, k: Math.min(4000, Math.max(0.9, v.k * factor)) }));
+
   return (
     <div className="flex flex-col gap-2">
       <div className="flex items-center gap-2">
         <Button size="sm" onClick={reset}>
           回到全览
+        </Button>
+        {/* 键盘与触屏用户也得能缩放：滚轮和捏合之外，留一对显式按钮。 */}
+        <Button size="sm" onClick={() => zoomBy(1 / 1.4)} aria-label="缩小">
+          −
+        </Button>
+        <Button size="sm" onClick={() => zoomBy(1.4)} aria-label="放大">
+          ＋
         </Button>
         <span className="tnum text-[11px] text-faint">
           {points.length} 个地点 · 缩放{' '}
@@ -187,15 +221,38 @@ function CanvasMap({
         <Card padded={false} className="min-w-0 flex-1 overflow-hidden">
           <div ref={wrapRef} className="h-[62vh] min-h-[320px] w-full">
             <svg
+              ref={svgRef}
               width={size.w}
               height={size.h}
               className="cursor-grab touch-none select-none active:cursor-grabbing"
-              onWheel={onWheel}
               onPointerDown={(e) => {
                 (e.target as Element).setPointerCapture?.(e.pointerId);
+                pointers.current.set(e.pointerId, { x: e.clientX, y: e.clientY });
+                if (pointers.current.size === 2) {
+                  // 第二根手指落下：进入捏合，同时放弃单指拖拽，
+                  // 否则两种手势会在同一次移动里互相打架。
+                  drag.current = null;
+                  pinch.current = { d: spread(), k: view.k, cx: view.cx, cy: view.cy };
+                  return;
+                }
                 drag.current = { x: e.clientX, y: e.clientY, cx: view.cx, cy: view.cy };
               }}
               onPointerMove={(e) => {
+                if (pointers.current.has(e.pointerId)) {
+                  pointers.current.set(e.pointerId, { x: e.clientX, y: e.clientY });
+                }
+                const p = pinch.current;
+                if (p && pointers.current.size >= 2) {
+                  const d2 = spread();
+                  if (p.d > 0 && d2 > 0) {
+                    setView({
+                      cx: p.cx,
+                      cy: p.cy,
+                      k: Math.min(4000, Math.max(0.9, p.k * (d2 / p.d)))
+                    });
+                  }
+                  return;
+                }
                 if (!drag.current) return;
                 const d = drag.current;
                 setView((v) => ({
@@ -204,7 +261,14 @@ function CanvasMap({
                   cy: d.cy - (e.clientY - d.y) / (v.k * size.w)
                 }));
               }}
-              onPointerUp={() => {
+              onPointerUp={(e) => {
+                pointers.current.delete(e.pointerId);
+                if (pointers.current.size < 2) pinch.current = null;
+                drag.current = null;
+              }}
+              onPointerCancel={(e) => {
+                pointers.current.delete(e.pointerId);
+                if (pointers.current.size < 2) pinch.current = null;
                 drag.current = null;
               }}
               onClick={() => onSelect(null)}
@@ -346,17 +410,23 @@ function LeafletMap({
         map.fitBounds(L.latLngBounds([bounds.south, bounds.west], [bounds.north, bounds.east]), {
           padding: [24, 24]
         });
+        // 图层组只建一次：以前每次 load() 都新建一个 addTo(map)，旧的从不移除，
+        // 于是平移缩放几次后标记层层叠加。同时用它挡住慢响应的乱序覆盖。
+        const g = L.layerGroup().addTo(map);
+        let seq = 0;
         const load = async () => {
           if (!map) return;
           const b = map.getBounds();
+          const mine = ++seq;
           const list = await api.mapPoints({
             west: b.getWest(),
             south: b.getSouth(),
             east: b.getEast(),
             north: b.getNorth()
           });
-          if (cancelled) return;
-          const g = L.layerGroup().addTo(map);
+          // 过期响应（期间又移动过）直接丢弃，否则先发后到会盖掉新的视野。
+          if (cancelled || mine !== seq) return;
+          g.clearLayers();
           const maxN = Math.max(1, ...list.map((p) => p.n));
           // 底图是 GCJ-02 的（高德/腾讯/国内图源）时，点位必须也用 GCJ-02，
           // 否则整体偏移三四百米。国内底图与 WGS-84 混用是这个应用最容易
