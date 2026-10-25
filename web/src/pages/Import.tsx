@@ -1,5 +1,5 @@
-import { useMemo, useRef, useState } from 'react';
-import { api } from '../lib/api';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import { ApiError, api } from '../lib/api';
 import { bytes, num } from '../lib/format';
 import type { DetectItem, Issue, Meta, Report } from '../lib/types';
 import { Badge, Button, Card, Empty, ErrorBox, SectionTitle, Spinner } from '../components/ui';
@@ -18,30 +18,87 @@ const STEPS: { n: Step; label: string }[] = [
 export default function Import({ meta }: { meta: Meta | null }) {
   const [step, setStep] = useState<Step>(1);
   const [files, setFiles] = useState<File[]>([]);
-  const [detected, setDetected] = useState<DetectItem[]>([]);
+  // null 表示「识别还没有结果」：可能正在上传，也可能识别请求失败了。
+  // 这两种状态都必须给用户出路，所以不能和「识别出 0 个文件」混为一谈。
+  const [detected, setDetected] = useState<DetectItem[] | null>(null);
   const [report, setReport] = useState<Report | null>(null);
   const [committed, setCommitted] = useState<Report | null>(null);
   const [busy, setBusy] = useState(false);
+  // 上传 + 识别单独一个开关：它和「预检中」语义不同，
+  // 共用一个 busy 会让第 2 步的按钮文案自相矛盾。
+  const [detecting, setDetecting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   // 裁决：conflictKey -> 'old' | 'new'
   const [overrides, setOverrides] = useState<Record<string, string>>({});
   const inputRef = useRef<HTMLInputElement>(null);
+  // 拖拽中（用于给虚线框加高亮）。整页可放，所以状态挂在页面级别。
+  const [dragging, setDragging] = useState(false);
+  // 拖放监听只挂一次，但要用到「当前这一步」和「最新的 onDetect」，故走 ref。
+  const stepRef = useRef(step);
+  const detectRef = useRef(onDetect);
+  // 每次渲染后同步最新值；在渲染期写 ref 会被 react-hooks 规则拦下。
+  useEffect(() => {
+    stepRef.current = step;
+    detectRef.current = onDetect;
+  });
+
+  // 拖放监听挂在 window 上而不是那只虚线框上。两个原因：
+  // 1. 虚线框只有 100 多像素高，拖到卡片标题、说明文字或文件列表上就落到框外，
+  //    浏览器会按默认行为直接打开/下载 CSV —— 页面看起来「拖了没反应」；
+  // 2. 只有拦住默认行为，才能保证拖歪了也不会把当前页面顶掉。
+  useEffect(() => {
+    const isFileDrag = (e: DragEvent) => Array.from(e.dataTransfer?.types ?? []).includes('Files');
+
+    const onDragOver = (e: DragEvent) => {
+      if (!isFileDrag(e)) return;
+      e.preventDefault();
+      if (e.dataTransfer) e.dataTransfer.dropEffect = 'copy';
+      setDragging(true);
+    };
+    const onDragLeave = (e: DragEvent) => {
+      // relatedTarget 为 null 才是真的离开窗口；在子元素之间移动时不清高亮，免得闪。
+      if (e.relatedTarget === null) setDragging(false);
+    };
+    const onDrop = (e: DragEvent) => {
+      if (!isFileDrag(e)) return;
+      e.preventDefault();
+      setDragging(false);
+      const list = pickCsvFiles(e.dataTransfer);
+      if (!list.length) {
+        setError('只认 CSV / TXT。Rond 导出的是四份 .csv 文件，文件夹和压缩包不行。');
+        return;
+      }
+      if (stepRef.current === 1) void detectRef.current(list);
+      else setError('当前已经在导入流程里。要换文件，请先回到第 1 步点「重选文件」。');
+    };
+
+    window.addEventListener('dragover', onDragOver);
+    window.addEventListener('dragleave', onDragLeave);
+    window.addEventListener('drop', onDrop);
+    return () => {
+      window.removeEventListener('dragover', onDragOver);
+      window.removeEventListener('dragleave', onDragLeave);
+      window.removeEventListener('drop', onDrop);
+    };
+  }, []);
 
   const blocking = useMemo(() => (detected ?? []).filter((d) => d.blocking), [detected]);
 
   async function onDetect(list: File[]) {
+    // 选完文件立刻进第 2 步。上传 + 识别 1~2 MB 也要一两秒，若停在第 1 步
+    // 什么都不显示，用户只会以为「选完没反应」—— 这正是最容易被当成卡死的地方。
     setFiles(list);
+    setDetected(null);
     setError(null);
-    setBusy(true);
+    setStep(2);
+    setDetecting(true);
     try {
       const items = await api.detect(list);
       setDetected(items);
-      setStep(2);
     } catch (e) {
-      setError(e instanceof Error ? e.message : String(e));
-      setStep(1);
+      setError(detectErrorText(e));
     } finally {
-      setBusy(false);
+      setDetecting(false);
     }
   }
 
@@ -110,23 +167,23 @@ export default function Import({ meta }: { meta: Meta | null }) {
             选择 Rond 导出的 CSV
           </SectionTitle>
           <p className="mb-3 text-[12px] leading-relaxed text-muted">
-            把四份导出文件一起拖进来就行——地点记录、到访记录、交通记录、天气数据。
+            把四份导出文件一起拖到页面上——地点记录、到访记录、交通记录、天气数据。
             缺哪一份也能导入，只是对应的功能会空着。
           </p>
           <div
-            onDragOver={(e) => e.preventDefault()}
-            onDrop={(e) => {
-              e.preventDefault();
-              const list = Array.from(e.dataTransfer.files).filter((f) =>
-                /\.(csv|txt)$/i.test(f.name)
-              );
-              if (list.length) void onDetect(list);
-            }}
             onClick={() => inputRef.current?.click()}
-            className="grid cursor-pointer place-items-center gap-1 rounded-md border border-dashed border-line-strong bg-raised px-4 py-10 text-center transition-colors hover:border-accent"
+            className={`grid cursor-pointer place-items-center gap-1 rounded-md border border-dashed px-4 py-10 text-center transition-colors ${
+              dragging
+                ? 'border-accent bg-accent-soft'
+                : 'border-line-strong bg-raised hover:border-accent'
+            }`}
           >
-            <div className="text-[13px] text-ink">拖到这里，或点击选择</div>
-            <div className="text-[11px] text-faint">CSV 文件，单个不超过 64 MB</div>
+            <div className="text-[13px] text-ink">
+              {dragging ? '松手就开始识别' : '拖到页面任意位置，或点击选择'}
+            </div>
+            <div className="text-[11px] text-faint">
+              CSV 文件，单个不超过 64 MB · 选完就开始识别
+            </div>
           </div>
           <input
             ref={inputRef}
@@ -136,6 +193,9 @@ export default function Import({ meta }: { meta: Meta | null }) {
             className="hidden"
             onChange={(e) => {
               const list = Array.from(e.target.files ?? []);
+              // 不清空 value，重新选同一批文件不会再触发 change ——
+              // 「再试一次」必须真的能再试一次。
+              e.target.value = '';
               if (list.length) void onDetect(list);
             }}
           />
@@ -162,40 +222,63 @@ export default function Import({ meta }: { meta: Meta | null }) {
 
       {step === 2 ? (
         <Card>
-          <SectionTitle>识别结果</SectionTitle>
-          <ul className="mb-3 flex flex-col gap-1">
-            {detected.map((d) => (
-              <li
-                key={d.file}
-                className="flex items-center gap-2 rounded border border-line px-2 py-1.5 text-[13px]"
-              >
-                <span className="min-w-0 flex-1 truncate">{d.file}</span>
-                {d.blocking ? (
-                  <Badge tone="danger">无法识别</Badge>
-                ) : (
-                  <>
-                    <Badge tone="accent">{d.label}</Badge>
-                    <span className="tnum text-[11px] text-faint">{d.rows} 行</span>
-                  </>
-                )}
-              </li>
-            ))}
-          </ul>
-          {blocking.length ? (
+          <SectionTitle aside={files.length ? `${files.length} 个文件` : undefined}>
+            识别结果
+          </SectionTitle>
+          {detecting ? (
+            <div className="flex flex-col items-center gap-2 py-8">
+              <Spinner label={`正在上传并识别 ${files.length} 个文件…`} />
+              <p className="max-w-sm text-center text-[12px] leading-relaxed text-muted">
+                四份 CSV 合计通常一两 MB，正常一两秒出结果。
+              </p>
+            </div>
+          ) : detected === null ? (
+            <p className="mb-3 text-[12px] leading-relaxed text-muted">
+              识别没成功。这不影响导入——预检会把这几份文件重新读一遍，给出完整的行数与问题清单。
+            </p>
+          ) : (
+            <ul className="mb-3 flex flex-col gap-1">
+              {detected.map((d) => (
+                <li
+                  key={d.file}
+                  className="flex items-center gap-2 rounded border border-line px-2 py-1.5 text-[13px]"
+                >
+                  <span className="min-w-0 flex-1 truncate">{d.file}</span>
+                  {d.blocking ? (
+                    <Badge tone="danger">无法识别</Badge>
+                  ) : (
+                    <>
+                      <Badge tone="accent">{d.label}</Badge>
+                      <span className="tnum text-[11px] text-faint">{d.rows} 行</span>
+                    </>
+                  )}
+                </li>
+              ))}
+            </ul>
+          )}
+          {detected !== null && blocking.length ? (
             <ErrorBox>
               有 {blocking.length} 个文件认不出类型（缺少必需列），请确认是不是 Rond 的导出文件。
             </ErrorBox>
           ) : null}
           <div className="mt-3 flex gap-2">
-            <Button variant="ghost" onClick={() => setStep(1)}>
+            <Button
+              variant="ghost"
+              disabled={busy || detecting}
+              onClick={() => {
+                setDetected(null);
+                setError(null);
+                setStep(1);
+              }}
+            >
               重选文件
             </Button>
             <Button
               variant="primary"
-              disabled={busy || blocking.length > 0 || files.length === 0}
+              disabled={busy || detecting || blocking.length > 0 || files.length === 0}
               onClick={() => void onPreview()}
             >
-              {busy ? '预检中…' : `预检 ${files.length} 个文件`}
+              {detecting ? '识别中…' : busy ? '预检中…' : `预检 ${files.length} 个文件`}
             </Button>
           </div>
         </Card>
@@ -527,6 +610,28 @@ function ConflictStep({
       </div>
     </>
   );
+}
+
+/** 从拖放数据里取 CSV。优先 files，取不到再退回 items ——
+ *  Safari 拖文件夹等来源时 files 会是空的，只看 files 会漏掉。 */
+function pickCsvFiles(dt: DataTransfer | null): File[] {
+  if (!dt) return [];
+  const all: File[] = dt.files.length
+    ? Array.from(dt.files)
+    : Array.from(dt.items ?? [])
+        .filter((it) => it.kind === 'file')
+        .map((it) => it.getAsFile())
+        .filter((f): f is File => f != null);
+  return all.filter((f) => /\.(csv|txt)$/i.test(f.name));
+}
+
+/** 把识别接口的异常翻成一句用户能照着做的话。 */
+function detectErrorText(e: unknown): string {
+  if (e instanceof DOMException && e.name === 'TimeoutError') {
+    return '上传或识别 90 秒没有响应。网络慢或服务一时没响应时可以重选文件重试，也可以直接点预检。';
+  }
+  if (e instanceof ApiError) return e.message;
+  return e instanceof Error ? e.message : String(e);
 }
 
 function fmt(v: unknown): string {

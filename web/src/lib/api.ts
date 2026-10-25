@@ -125,12 +125,15 @@ export const api = {
     ),
 
   // ---- 导入 ----
+  // 识别只是「回显类型」，不是导入的必经步骤，所以给它一个硬超时：
+  // 上传卡住时宁可报超时让用户直接走预检，也不要把人无限期按在转圈上。
   detect: (files: File[]) => {
     const fd = new FormData();
     for (const f of files) fd.append('files', f, f.name);
     return json<{ items: DetectItem[] }>('/api/imports/detect', {
       method: 'POST',
-      body: fd
+      body: fd,
+      signal: AbortSignal.timeout(90_000)
     }).then((r) => r.items);
   },
 
