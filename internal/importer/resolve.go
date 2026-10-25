@@ -313,9 +313,68 @@ func (r *PlaceResolver) ResolveName(name string, createStub bool) (ResolveResult
 	res.Method, res.Confidence = "nearest", "medium"
 	return res, []csvin.Issue{{
 		Severity: csvin.SevWarn, Code: "WARN_NAME_AMBIGUOUS", Field: "place_id",
-		Value: name, Message: fmt.Sprintf("地点「%s」有 %d 个同名条目，此处无坐标可消歧，已选到访最多的一个", name, len(cs)),
-		Hint: "若选错，可在地点页合并或改名",
+		Value: name, Message: fmt.Sprintf("地点「%s」有 %d 个同名条目，此处没有可用的时间或坐标证据，已按稳定规则选一个", name, len(cs)),
+		Hint: "只会影响交通/天气的归属统计；到访按坐标绑定，不受影响。想彻底分清，可在导出侧给同名地点带上门店/区域名",
 	}}
+}
+
+// temporalMatchMeters 是「时间锚点 → 同名候选」允许的最大偏差。
+//
+// 锚点坐标来自同一时刻的到访，正常情况下离目标分店只有几十米。实测同名
+// 分店的最近间距约 2.6 km（苏州四家塔斯汀），取 1.5 km 既能包容定位漂移，
+// 又不会在两店之间选错。
+const temporalMatchMeters = 1500.0
+
+// ResolveNameAt 按名字解析，并用「那一刻人在哪」排除同名歧义。
+//
+// a 为 nil（附近没有到访、或库还是空的）时，行为与 ResolveName 完全一致 ——
+// 这条路径保证了没有时间证据时的确定性，幂等性不受影响。
+func (r *PlaceResolver) ResolveNameAt(name string, a *visitAnchor, createStub bool) (ResolveResult, []csvin.Issue) {
+	name = strings.TrimSpace(name)
+	cs := r.byName[name]
+	if len(cs) <= 1 || a == nil {
+		return r.ResolveName(name, createStub)
+	}
+
+	// 证据一：锚点本身就解析到了这一条同名地点。
+	//
+	// 这是最强的情形 —— 出发/到达时刻附近的那条到访，地点名与目标完全相同，
+	// 那它俩必然是同一个地方（Rond 的行程与到访是同一个停留拆出来的两半）。
+	if a.PlaceKey != "" {
+		for _, c := range cs {
+			if c.Key == a.PlaceKey {
+				return ResolveResult{
+					PlaceKey: c.Key, Method: "temporal", Confidence: "high", Frame: "wgs84",
+				}, nil
+			}
+		}
+	}
+
+	// 证据二：锚点有坐标，取同名候选里离它最近的一个。
+	//
+	// 地点名可能不完全相同（例如交通写「塔斯汀」、到访写「塔斯汀中国汉堡」），
+	// 这时只能靠位置判断；超过阈值就不敢断言，退回确定性规则。
+	if a.HasCoord {
+		var best *candidate
+		bestD := 0.0
+		for _, c := range cs {
+			if !c.HasCoord {
+				continue
+			}
+			d := geo.HaversineMeters(a.Lat, a.Lon, c.Lat, c.Lon)
+			if best == nil || d < bestD {
+				best, bestD = c, d
+			}
+		}
+		if best != nil && bestD <= temporalMatchMeters {
+			return ResolveResult{
+				PlaceKey: best.Key, Method: "temporal_nearest", DistM: bestD,
+				Confidence: "high", Frame: "wgs84",
+			}, nil
+		}
+	}
+
+	return r.ResolveName(name, createStub)
 }
 
 // betterCandidate 判断同名多址时谁更该被选中：有坐标的优先于无坐标桩，

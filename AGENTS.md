@@ -41,6 +41,8 @@ cd web && pnpm run lint   # prettier --check + eslint
 - Go 只用标准库 + `modernc.org/sqlite`（纯 Go，`CGO_ENABLED=0` 可编译）。不要引入 Web 框架。
 - 时间处理：显式构造 `Asia/Shanghai`（FixedZone +8），不依赖宿主 TZ；业务表冗余存本地日期/月份/星期等列，查询层不做时区换算。
 - 坐标：**WGS-84 是权威存储**（`places.lat/lon`、`visits.lat/lon`），GCJ-02 是渲染副本（`*_gcj`），原始导入值留在 `*_raw`。改坐标逻辑必须先读 `internal/geo` 的文档与黄金值测试。
+- 同名地点**不要求唯一**（连锁分店同名多址是正常数据），唯一性由 `places.source_key`（名称 + 坐标）承担；只有 `is_stub=1` 的桩地点按名字唯一（`uq_places_stub_name`）。
+- **交通/天气的地点靠「同一时刻人在哪」消歧**，不是靠名字猜：Rond 的 `trips.from_at` 与该段停留的 `visits.departed_at` 是同一秒，`to_at` 与下一段的 `arrived_at` 相同。实现在 `internal/importer/timeline.go`（`timeIndex`）+ `resolve.go` 的 `ResolveNameAt`。因此**解析顺序必须是 地点 → 到访 → 交通/天气**，不能按上传顺序；没有锚点时才退回「有坐标优先 + 稳定键字典序」并记 `WARN_NAME_AMBIGUOUS`。改这段跑 `TestResolveNameAt*`、`TestTimeIndex*` 与 `TestSecondPreviewReportsZeroReady`。
 - 幂等：导入按 SHA-256 去重键判定，重复预检必须显示 ready=0；改导入逻辑后跑 `TestSecondPreviewReportsZeroReady` 与（有真实数据时）`YOULV_REAL_CSV_DIR=... go test -run TestRealFullImport`。
 - 迁移只增不改：新表/新列写新的 `migrations/NNN_*.sql`，禁止修改已应用的迁移文件。
 - Docker：基镜 `ghcr.io/felix2yu/base:alpine-3.24`，PUID/PGID 降权已下沉基镜，本仓不维护 entrypoint；`.dockerignore` 不得排除 `bin/`（Dockerfile COPY 源）。

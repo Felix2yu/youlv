@@ -147,21 +147,37 @@ func (s *Service) Preview(ctx context.Context, files []UploadedFile, opt Options
 	// 地点解析完之后重名提示才准确。
 	if n := resolver.HomonymGroups(); n > 0 {
 		rep.Highlights = append(rep.Highlights,
-			fmt.Sprintf("检测到 %d 组重名地点（同名不同址，如连锁分店），将按「名称 + 坐标」消歧，不做合并", n))
+			fmt.Sprintf("检测到 %d 组重名地点（同名不同址，如连锁分店），将按「时刻 + 坐标」消歧，不做合并", n))
 	}
+
+	// 到访必须先于交通/天气解析。
+	//
+	// 交通与天气只有地点名，同名多址时得靠「那一刻人在哪」来消歧，而这条
+	// 证据就是到访记录。此前四个文件挤在同一个循环里按上传顺序处理，交通
+	// 先上传时锚点全空，塔斯汀这类连锁店的交通会整体绑到同一条分店上。
+	for i, f := range decoded {
+		if f.Kind == csvin.KindVisits {
+			visits, rep = s.parseVisits(f, detects[i], rep, resolver, opt)
+		}
+	}
+	// 锚点 = 本批次刚解析的到访 + 库里已有的。增量导入（只带交通/天气）时
+	// 前者为空，全靠后者。
+	past, err := s.loadVisitAnchors(ctx)
+	if err != nil {
+		return nil, err
+	}
+	anchors := newTimeIndex(append(anchorsFromStaged(visits), past...))
 
 	for i, f := range decoded {
 		switch f.Kind {
-		case csvin.KindVisits:
-			visits, rep = s.parseVisits(f, detects[i], rep, resolver, opt)
 		case csvin.KindTrips:
-			trips, rep = s.parseTrips(f, detects[i], rep, resolver, opt)
+			trips, rep = s.parseTrips(f, detects[i], rep, resolver, anchors, opt)
 		case csvin.KindWeather:
 			existingW, err := s.loadExistingWeather(ctx)
 			if err != nil {
 				return nil, err
 			}
-			weather, rep = s.parseWeather(f, detects[i], rep, resolver, opt, existingW)
+			weather, rep = s.parseWeather(f, detects[i], rep, resolver, anchors, opt, existingW)
 		}
 	}
 
@@ -655,7 +671,7 @@ func (s *Service) parseVisits(f *csvin.File, d *csvin.DetectResult, rep *Report,
 // ---------- 交通 ----------
 
 func (s *Service) parseTrips(f *csvin.File, d *csvin.DetectResult, rep *Report,
-	resolver *PlaceResolver, opt Options) ([]stagedTrip, *Report) {
+	resolver *PlaceResolver, anchors *timeIndex, opt Options) ([]stagedTrip, *Report) {
 	ci := d.Mapping
 	st := s.stat(csvin.KindTrips, rep)
 	var out []stagedTrip
@@ -725,12 +741,14 @@ func (s *Service) parseTrips(f *csvin.File, d *csvin.DetectResult, rep *Report,
 		var fr, tr ResolveResult
 		var fIssues, tIssues []csvin.Issue
 		if fromName != "" {
-			fr, fIssues = resolver.ResolveName(fromName, opt.CreateStubs)
+			// 「从」用出发时刻的离开锚点：Rond 的 trips.from_at 与那一段停留的
+			// departed_at 是同一秒（见 timeline.go 的实测说明）。
+			fr, fIssues = resolver.ResolveNameAt(fromName, anchors.departAnchor(from.Unix), opt.CreateStubs)
 		} else {
 			fr = ResolveResult{Method: "empty"}
 		}
 		if toName != "" {
-			tr, tIssues = resolver.ResolveName(toName, opt.CreateStubs)
+			tr, tIssues = resolver.ResolveNameAt(toName, anchors.arriveAnchor(to.Unix), opt.CreateStubs)
 		} else {
 			tr = ResolveResult{Method: "empty"}
 		}
@@ -773,7 +791,7 @@ func (s *Service) parseTrips(f *csvin.File, d *csvin.DetectResult, rep *Report,
 // ---------- 天气 ----------
 
 func (s *Service) parseWeather(f *csvin.File, d *csvin.DetectResult, rep *Report,
-	resolver *PlaceResolver, opt Options, existing map[string]stagedWeather) ([]stagedWeather, *Report) {
+	resolver *PlaceResolver, anchors *timeIndex, opt Options, existing map[string]stagedWeather) ([]stagedWeather, *Report) {
 	ci := d.Mapping
 	st := s.stat(csvin.KindWeather, rep)
 	var out []stagedWeather
@@ -798,7 +816,8 @@ func (s *Service) parseWeather(f *csvin.File, d *csvin.DetectResult, rep *Report
 		hourTS := csvin.FloorHour(tv.Unix)
 
 		name := strings.TrimSpace(ci.Get(rec, "地点"))
-		res, resIssues := resolver.ResolveName(name, opt.CreateStubs)
+		// 天气按整点记，用同一小时内的到访当锚点。
+		res, resIssues := resolver.ResolveNameAt(name, anchors.arriveAnchor(hourTS), opt.CreateStubs)
 		for _, ri := range resIssues {
 			ri.Line, ri.RowNo = line, rowNo
 			st.Warned++
