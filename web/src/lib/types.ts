@@ -236,6 +236,20 @@ export interface Report {
   duration_ms?: number;
 }
 
+/** 清空全部数据的产出：删掉了多少行，事后可核对。 */
+export interface PurgeResult {
+  deleted: {
+    visits: number;
+    trips: number;
+    weather: number;
+    places: number;
+    tags: number;
+    activities: number;
+    batches: number;
+    issues: number;
+  };
+}
+
 export interface DetectItem {
   file: string;
   kind: string;

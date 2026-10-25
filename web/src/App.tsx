@@ -122,7 +122,7 @@ export default function App() {
               <Spinner label="正在读取数据" />
             </div>
           ) : (
-            <Router path={targetPath} meta={meta.data} />
+            <Router path={targetPath} meta={meta.data} metaReload={meta.reload} />
           )}
         </main>
       </div>
@@ -130,7 +130,15 @@ export default function App() {
   );
 }
 
-function Router({ path, meta }: { path: string; meta: Meta | null }) {
+function Router({
+  path,
+  meta,
+  metaReload
+}: {
+  path: string;
+  meta: Meta | null;
+  metaReload: () => void;
+}) {
   switch (path) {
     case '/map':
       return <MapPage />;
@@ -141,7 +149,7 @@ function Router({ path, meta }: { path: string; meta: Meta | null }) {
     case '/import':
       return <Import meta={meta} />;
     case '/settings':
-      return <Settings meta={meta} />;
+      return <Settings meta={meta} onDataChanged={metaReload} />;
     case '/timeline':
     default:
       return <Timeline />;

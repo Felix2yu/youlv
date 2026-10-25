@@ -14,6 +14,7 @@ import type {
   PlaceStats,
   Report,
   RollbackResult,
+  PurgeResult,
   Settings,
   BBox,
   Tag,
@@ -153,6 +154,14 @@ export const api = {
   rollback: (batchNo: string) =>
     json<RollbackResult>(`/api/imports/${encodeURIComponent(batchNo)}/rollback`, {
       method: 'POST'
+    }),
+
+  // 清空全部导入数据与批次记录（不可撤销）。confirm 是后端要求的显式确认标记。
+  purge: () =>
+    json<PurgeResult>('/api/imports/purge', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ confirm: 'PURGE' })
     }),
 
   imports: (limit = 50) =>

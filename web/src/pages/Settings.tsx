@@ -19,7 +19,13 @@ const STATUS_TEXT: Record<string, string> = {
   rolled_back: '已撤销'
 };
 
-export default function Settings({ meta }: { meta: Meta | null }) {
+export default function Settings({
+  meta,
+  onDataChanged
+}: {
+  meta: Meta | null;
+  onDataChanged?: () => void;
+}) {
   const [theme, setTheme] = useTheme();
   const list = useAsync<ImportRow[]>(() => api.imports(50), []);
   const [busy, setBusy] = useState<string | null>(null);
@@ -164,7 +170,71 @@ export default function Settings({ meta }: { meta: Meta | null }) {
           </ul>
         )}
       </Card>
+
+      <PurgeCard meta={meta} onDone={onDataChanged} />
     </div>
+  );
+}
+
+/** 清空全部数据：不可撤销，所以必须先展开确认、再点确认。 */
+function PurgeCard({ meta, onDone }: { meta: Meta | null; onDone?: () => void }) {
+  const [confirming, setConfirming] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+
+  // 只有确实有数据时才把危险按钮亮出来；加载中（meta 为 null）不当成空库。
+  const empty =
+    meta != null && !meta.has_data && meta.visits === 0 && meta.places === 0 && meta.trips === 0;
+
+  async function run() {
+    setBusy(true);
+    setErr(null);
+    try {
+      await api.purge();
+      setConfirming(false);
+      onDone?.();
+      // 清空之后最该做的事就是重新导入，直接把人送到导入页。
+      window.location.hash = '#/import';
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : String(e));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <Card>
+      <SectionTitle>清空数据</SectionTitle>
+      {err ? <ErrorBox>{err}</ErrorBox> : null}
+      <p className="text-[12px] leading-relaxed text-muted">
+        把导入进来的数据和导入历史一起删掉，回到空库；主题、底图这些设置项保留。
+        清空前想留底，先用上面那条 <code>youlv backup</code> 导一份。
+      </p>
+      {empty ? (
+        <p className="mt-2 text-[12px] text-faint">库里现在没有数据。</p>
+      ) : confirming ? (
+        <div className="mt-3 rounded-md border border-danger/40 bg-danger-soft px-3 py-2">
+          <p className="text-[12px] leading-relaxed text-danger">
+            将删除 {num(meta?.visits ?? 0)} 次到访、{num(meta?.places ?? 0)} 个地点、
+            {num(meta?.trips ?? 0)} 段交通、{num(meta?.weather ?? 0)}{' '}
+            条天气，以及全部批次与问题记录。
+            <b> 不可撤销。</b>
+          </p>
+          <div className="mt-2 flex gap-2">
+            <Button variant="danger" disabled={busy} onClick={() => void run()}>
+              {busy ? '清空中…' : '确认清空'}
+            </Button>
+            <Button variant="ghost" disabled={busy} onClick={() => setConfirming(false)}>
+              取消
+            </Button>
+          </div>
+        </div>
+      ) : (
+        <Button variant="danger" className="mt-3" onClick={() => setConfirming(true)}>
+          清空全部数据…
+        </Button>
+      )}
+    </Card>
   );
 }
 

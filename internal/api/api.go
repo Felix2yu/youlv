@@ -83,6 +83,7 @@ func (s *Server) routes() {
 
 	s.mux.HandleFunc("POST /api/imports/preview", h(s.importPreview))
 	s.mux.HandleFunc("POST /api/imports/detect", h(s.importDetect))
+	s.mux.HandleFunc("POST /api/imports/purge", h(s.importPurge))
 	s.mux.HandleFunc("POST /api/imports/{batchNo}/commit", h(s.importCommit))
 	s.mux.HandleFunc("POST /api/imports/{batchNo}/rollback", h(s.importRollback))
 	s.mux.HandleFunc("GET /api/imports", h(s.importList))

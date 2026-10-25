@@ -105,6 +105,30 @@ func (s *Server) settingsUpdate(w http.ResponseWriter, r *http.Request) error {
 	return nil
 }
 
+// importPurge 清空全部导入数据与批次记录。
+//
+// 这是本服务里唯一不可撤销的操作，所以要求请求体显式带 confirm 标记：
+// 误点、误调用（curl 少写了 URL）都不至于把用户的数据抹掉。
+func (s *Server) importPurge(w http.ResponseWriter, r *http.Request) error {
+	var body struct {
+		Confirm string `json:"confirm"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil || body.Confirm != purgeConfirm {
+		writeErr(w, http.StatusBadRequest, "缺少确认标记，清空操作未执行")
+		return nil
+	}
+	res, err := s.imp.Purge(r.Context())
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, err.Error())
+		return nil
+	}
+	writeJSON(w, http.StatusOK, res)
+	return nil
+}
+
+// purgeConfirm 是清空操作要求的确认值，由前端原样回传。
+const purgeConfirm = "PURGE"
+
 // importDelete 删除一个批次的审计记录。
 //
 // 与 rollback 的分工：rollback 删业务数据，delete 删审计行。
