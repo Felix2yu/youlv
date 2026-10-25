@@ -15,8 +15,15 @@ WORKDIR /app
 # 容器内布局（全 fleet 统一）：二进制放 /app/youlv，数据放 /app/data 挂载卷。
 # /app 不在 PATH 上，所以外部备份工具的 BACKUP_SQLITE_CMD 必须写绝对路径
 # `/app/youlv backup`，裸名 `youlv backup` 在 docker exec 里会 command not found。
-# /app/data 由基镜入口按 PUID/PGID chown，容器重建不丢数据。
-ENV YOULV_DATA_DIR=/app/data
+#
+# APP_DATA_DIR 与 YOULV_DATA_DIR 是两个不同的消费者，缺一不可：
+#   APP_DATA_DIR  基镜入口读取，决定启动时把哪个目录 chown 给 PUID/PGID；
+#                 不设它，入口只会 chown 基镜默认的 /data（本镜像里不存在，被跳过），
+#                 /app/data 保持 root 属主，降权到 1000:1000 的进程连
+#                 /app/data/tmp/imports 都建不出来，容器起动即退出。
+#   YOULV_DATA_DIR 应用自己读取，决定 youlv.db 与暂存目录落在哪。
+ENV APP_DATA_DIR=/app/data \
+    YOULV_DATA_DIR=/app/data
 
 COPY --chmod=755 bin/youlv /app/youlv
 

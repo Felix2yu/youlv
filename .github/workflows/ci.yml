@@ -59,6 +59,71 @@ jobs:
         mkdir -p internal/web/dist
         cp -R web/dist/. internal/web/dist/
 
+  # 镜像冒烟：把刚推上去的 sha-<full sha> 镜像真跑起来。
+  #
+  # 只 build 不 run 的 CI 拦不住运行期缺陷。2026-10-25 就出过一次：Dockerfile 漏了
+  # 基镜读取的 APP_DATA_DIR，入口于是 chown 不存在的 /data，/app/data 保持 root 属主，
+  # 降权到 1000:1000 的进程建不出 /app/data/tmp —— 容器起动即退出，而 build、推送、
+  # 打 manifest 全程是绿的，缺陷静默进了镜像仓库。这里把「能起来 + 能写库 + 非 root」
+  # 变成必过项。
+  smoke:
+    needs: image
+    if: github.event_name != 'pull_request'
+    permissions:
+      contents: read
+      packages: read
+    runs-on: ubuntu-latest
+    steps:
+      - name: Login to GHCR
+        uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Run image on a fresh volume
+        run: |
+          set -euo pipefail
+          img="ghcr.io/felix2yu/youlv:sha-${GITHUB_SHA}"
+          docker pull "$img"
+          docker volume create youlv-smoke
+          docker run -d --name youlv-smoke -v youlv-smoke:/app/data -p 18802:8802 "$img"
+
+          ok=0
+          for i in $(seq 1 30); do
+            if docker exec youlv-smoke wget -q -O- http://127.0.0.1:8802/api/health 2>/dev/null \
+                 | grep -q '"ok":true'; then
+              echo "健康检查通过（第 $i 次）"
+              ok=1
+              break
+            fi
+            if [ "$(docker inspect -f '{{.State.Running}}' youlv-smoke)" != "true" ]; then
+              echo "容器已退出，日志如下："
+              docker logs youlv-smoke
+              exit 1
+            fi
+            sleep 2
+          done
+          if [ "$ok" != 1 ]; then
+            echo "健康检查超时，日志如下："
+            docker logs youlv-smoke
+            exit 1
+          fi
+
+          # 数据目录必须归运行身份（SQLite WAL 需要对目录本身可写），库文件要真的建出来
+          docker exec youlv-smoke ls -ln /app/data
+          docker exec youlv-smoke test -f /app/data/youlv.db
+
+          # 主进程不能是 root：从宿主侧看容器 PID 1 的 uid
+          pid=$(docker inspect -f '{{.State.Pid}}' youlv-smoke)
+          uid=$(ps -o uid= -p "$pid" | tr -d ' ')
+          echo "PID 1 uid=$uid"
+          [ "$uid" = "1000" ] || { echo "主进程不是 1000，降权没生效"; docker top youlv-smoke; exit 1; }
+
+      - name: Cleanup
+        if: always()
+        run: docker rm -f youlv-smoke || true
+
   release:
     if: github.event_name == 'release'
     permissions:
