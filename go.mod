@@ -4,7 +4,7 @@ go 1.27.3
 
 require (
 	golang.org/x/text v0.44.0
-	modernc.org/sqlite v1.62.0
+	modernc.org/sqlite v1.63.0
 )
 
 require (
